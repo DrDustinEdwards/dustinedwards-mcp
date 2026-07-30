@@ -1,0 +1,17 @@
+{
+  "name": "dustinedwards-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP wrapper over the dustinedwards.info operator API. Contains no policy.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "wrangler types && tsc -b",
+    "probe:captures": "node scripts/probe-report.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "wrangler": "^4.107.0"
+  }
+}
