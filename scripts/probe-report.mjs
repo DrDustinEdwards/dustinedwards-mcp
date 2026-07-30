@@ -20,6 +20,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const NS = JSON.parse(
   readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8").replace(
@@ -28,11 +29,16 @@ const NS = JSON.parse(
   ),
 ).kv_namespaces.find((n) => n.binding === "PROBE_KV").id;
 
+// Run wrangler's JS entry point with this node binary. Not `npx` (needs a shell,
+// which node warns about and which would need escaping), and not the
+// node_modules/.bin/wrangler.cmd shim, which node 24 refuses to spawnSync
+// without a shell and fails with EINVAL. Measured on Windows 2026-07-30.
+const CLI = fileURLToPath(new URL("../node_modules/wrangler/bin/wrangler.js", import.meta.url));
+
 const wrangler = (...args) =>
-  execFileSync("npx", ["wrangler", ...args, "--namespace-id", NS, "--remote"], {
+  execFileSync(process.execPath, [CLI, ...args, "--namespace-id", NS, "--remote"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    shell: process.platform === "win32",
   });
 
 const phaseFlag = process.argv.indexOf("--phase");
@@ -50,6 +56,19 @@ if (phaseFlag !== -1) {
 const keys = JSON.parse(wrangler("kv", "key", "list", "--prefix", "capture:"))
   .map((k) => k.name)
   .sort();
+
+// Clearing matters before a real measurement: synthetic curl checks land in the
+// same log and would be read as client behaviour.
+if (process.argv.includes("--reset")) {
+  for (const k of keys) wrangler("kv", "key", "delete", k);
+  try {
+    wrangler("kv", "key", "delete", "probe:seq");
+  } catch {
+    /* already absent */
+  }
+  console.log(`cleared ${keys.length} captures`);
+  process.exit(0);
+}
 
 if (!keys.length) {
   console.log("No captures yet. Connect a client to the probe's /mcp URL.");
