@@ -97,10 +97,16 @@ than as a transport error.
 - `npm run dev`
 - `npm run deploy` (wrangler deploy)
 - `npm run typecheck` (`wrangler types && tsc -b`)
-- `npm run check:wrapper` gate over the no-policy law
-- `npm run check:conformance` official MCP conformance suite, per era
+- `npm run build` (`wrangler deploy --dry-run`). NOT the same check as typecheck.
+- `npm run check:wrapper` gate over the no-policy law, 223 assertions
+- `npm run check:wrapper:plant` proves that gate actually fails, 11 violations
+- `npm run check:conformance` official MCP suite, per era. A BASELINE, not a sweep.
 - `node scripts/probe-report.mjs` read the client measurement
-- `node scripts/probe-report.mjs --phase auth` flip the probe to capture OAuth
+- `node scripts/probe-report.mjs --reset` clear captures before a real measurement
+
+The probe no longer has phases. It served OAuth discovery routes only while those
+were unclaimed; they now belong to the real authorization server, and the walk
+they existed to capture has been measured and recorded in the README.
 
 Check a gate's exit code DIRECTLY, never through a pipe. `tail` masks it and has
 already reported exit 0 on a failing run elsewhere in this portfolio.
