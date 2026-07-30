@@ -127,3 +127,30 @@ the same commit. Scoped `git add` of named paths, never `-A`.
 
 No em dashes. Secrets are wrangler secrets and are never read, printed, or
 committed.
+
+## Gate discipline learned in this repo's first session
+
+- **Typecheck is not a build.** Two commits shipped with runtime deps absent from
+  `package.json` while `npx tsc -b` stayed green, because `node_modules` still had
+  them. Run `npm run build`.
+- **A gate never observed failing has not been verified, and that includes the
+  HARNESS.** The first plant harness reverted with `git checkout -- .`, which does
+  not touch untracked files, so residue accumulated and every result after the
+  first was contaminated. It also destroyed uncommitted work. `plant-violations.sh`
+  snapshots and restores the exact files it edits and re-checks the baseline
+  between plants.
+- **Commit before running anything that reverts.** The mainline ruling already says
+  never leave work uncommitted; this is why.
+- **Two strippers, and picking the wrong one silently disables an assertion.**
+  `withoutComments` keeps string literals and is for content; `codeOnly` removes
+  them and is for code. Four planted violations walked through a gate that used the
+  wrong one.
+- **Check exit codes directly, never through a pipe**, and beware the reverse: on
+  Windows the conformance suite aborts on a libuv `UV_HANDLE_CLOSING` assertion
+  AFTER printing results, so a passing scenario exits non-zero. Judge the parsed
+  count and surface the crash.
+- **Use a heredoc for commit messages.** Backticks inside `git commit -m "..."` are
+  command-substituted by bash and silently delete words from the message.
+- **Post-deploy readings are unstable.** A `POST` returned Cloudflare **error 1104**
+  while `/health` was already 200. Same trap core.md records as 404s, different
+  code. Poll until stable.

@@ -123,27 +123,88 @@ UNMEASURED here, and is not claimed either way.
 
 ## Gates
 
-| Gate | Proves |
-|---|---|
-| `npm run typecheck` | `wrangler types && tsc -b` |
-| `npm run check:wrapper` | the no-policy law, mechanically: no imports from the app, no D1/R2/GitHub binding, bindings allowlist derived from `wrangler.jsonc`, failing in both directions |
-| `npm run check:conformance` | the official `@modelcontextprotocol/conformance` suite, per era |
+| Gate | Proves | State |
+|---|---|---|
+| `npm run typecheck` | `wrangler types && tsc -b` | green |
+| `npm run build` | `wrangler deploy --dry-run`. 1,146.62 KiB raw, 205.49 KiB gzip | green |
+| `npm run check:wrapper` | the no-policy law, mechanically. 223 assertions | green, 11/11 planted violations caught |
+| `npm run check:wrapper:plant` | that `check:wrapper` actually fails | 11 caught, 0 missed |
+| `npm run check:conformance` | the official suite against the real protocol layer, per era | **baseline, not a clean sweep** |
 
-The conformance suite is real and runnable (`@modelcontextprotocol/conformance`,
-`server` / `client` / `authorization` subcommands, `--spec-version` filtering,
-`--expected-failures` baselining). Running it against a hand-rolled draft server
-during this repo's first session is what settled the library-versus-hand-roll
-question:
+`npm run build` exists because **typecheck is not a build.** Two commits shipped
+with the runtime dependencies missing from `package.json` and typecheck passed
+throughout, because `node_modules` still held them locally. Only a real bundle
+catches that.
+
+`check:wrapper` fails in both directions: a forbidden binding fails, and so does a
+missing tool, a second call site on the era shim, or a policy statement dropped
+from a tool description. Verified by planting eleven violations. The first attempt
+at that harness was itself wrong, and fixing it exposed four real blind spots in
+the gate, all from one cause: the comment-stripper also removed string literals,
+so assertions searching for a URL or an option value were reading text with that
+value already deleted. There are now two strippers and a comment saying which to
+use when.
+
+### check:conformance is a baseline, and says so
+
+`@modelcontextprotocol/conformance` is genuinely runnable (`server` / `client` /
+`authorization` subcommands, `--spec-version` filtering). It runs against
+`test/conformance-entry.ts`, which mounts the **real** handler and the real five
+tools with only the client leg and the limiter removed, and the API leg aimed at a
+local stub. So what is certified is the code that ships, not a stand-in.
+
+| Era | Scenario | Result |
+|---|---|---|
+| 2026-07-28 | `server-stateless` (SEP-2575) | 24/28 baseline |
+| 2025-11-25 | `server-initialize` | 1/1 |
+
+The 4 shortfalls are **upstream**: `@modelcontextprotocol/server` 2.0.0 does not
+implement `MissingRequiredClientCapabilityError` (-32021). Attributed upstream
+rather than to this repo because a dependency-free draft server written in the same
+session scored the same 24/28 on that scenario. The gate fails on a regression
+**and** on an improvement, so when the SDK fixes it the baseline gets tightened
+rather than quietly over-passing.
+
+**Known gaps, not passes.** `http-header-validation` measured 13/13 standalone but
+returns no parseable count through this harness; `caching`,
+`dns-rebinding-protection`, `json-schema-2020-12` and the `tools-call` scenarios
+are not yet wired in. A full sweep exceeded nine minutes, hence the short list and
+the per-scenario timeout.
+
+That library-versus-hand-roll comparison is also what settled the implementation
+choice:
 
 | Scenario | hand-rolled draft | `agents` + MCP SDK v2 |
 |---|---|---|
-| `server-stateless` (SEP-2575) | 0/8 | 24/28 |
-| `http-header-validation` (SEP-2243) | 3/8 | 13/13 |
+| `server-stateless` | 0/8 | 24/28 |
+| `http-header-validation` | 3/8 | 13/13 |
 
 A 2026-07-28 server owes about twenty discrete MUSTs across three SEPs, including
 details no prose surfaced: `cacheScope` must be `"public"` or `"private"`, and
 JSON-RPC method values are case-sensitive. Hand-rolling was a correctness
 liability, not a line-count saving.
+
+## Deploy state and the one open risk
+
+Deployed at `https://dustinedwards-mcp.dustin-edwards.workers.dev`, version
+`c2b3a458-f26c-4480-bc25-983ca86751bc`, Worker startup 108 ms.
+
+Verified on the live deploy with **no secrets set**, which is the fails-closed
+property rather than an accident:
+
+- `/mcp` unauthenticated returns `401` with `WWW-Authenticate` pointing at the
+  **path-scoped** PRM, which is the form claude.ai requests first.
+- `/authorize` with no GitHub credentials returns **503**. Not configured means not
+  open.
+- `/probe/mcp` still answers both eras.
+
+**OPEN RISK, unresolved until the first real connection.** The library advertises
+`resource` in its PRM as the **origin**, while claude.ai was measured sending
+`resource=<origin>/mcp` **with the path**, and `workers-oauth-provider` defaults to
+strict RFC 8707 exact matching. If the token exchange fails, the first thing to try
+is `resourceMatchOriginOnly: true` in the `OAuthProvider` options. It is
+deliberately **not** set pre-emptively: it loosens audience binding, and setting it
+on a guess would weaken the exact property the spec's auth story exists to provide.
 
 ## Scope exclusions
 
