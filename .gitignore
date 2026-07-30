@@ -4,3 +4,4 @@ worker-configuration.d.ts
 *.tsbuildinfo
 .dev.vars
 dist/
+wrangler.jsonc

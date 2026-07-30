@@ -18,7 +18,7 @@
  * Verified by planting violations. See the PLANTED VIOLATIONS block at the bottom.
  */
 
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -81,8 +81,56 @@ function codeOnly(text) {
     .replace(/'(?:\\.|[^\\'])*'/g, '""');
 }
 
-const config = readJsonc(join(ROOT, "wrangler.jsonc"));
+/**
+ * Resolve the wrangler config.
+ *
+ * The real `wrangler.jsonc` is gitignored, because it carries live KV namespace
+ * ids and this repo is public. So a fresh clone has only
+ * `wrangler.jsonc.example`, and this gate has to work there too or it becomes a
+ * gate that only its author can run.
+ *
+ * Every assertion here is about binding SHAPE (which keys exist, which binding
+ * names, whether the DO migration is sqlite-backed), never about id VALUES, so
+ * the example proves exactly as much as the real file. Preference order is real
+ * first, so a developer who has both is checked against what actually deploys.
+ *
+ * The gap this leaves, stated rather than hidden: on a machine with ONLY the
+ * example, a forbidden binding added to the real file would not be seen. That is
+ * closed below by asserting the two agree whenever both are present.
+ */
+function resolveConfig() {
+  const real = join(ROOT, "wrangler.jsonc");
+  const example = join(ROOT, "wrangler.jsonc.example");
+  if (existsSync(real)) return { path: real, which: "wrangler.jsonc" };
+  if (existsSync(example)) return { path: example, which: "wrangler.jsonc.example" };
+  // Fails CLOSED. No config means nothing can be proven, which is not a pass.
+  console.error("FAIL  no wrangler config found (neither wrangler.jsonc nor wrangler.jsonc.example)");
+  process.exit(1);
+}
+
+const configSource = resolveConfig();
+const config = readJsonc(configSource.path);
 const files = sourceFiles();
+
+// When both exist they must describe the same bindings, or the example is
+// decoration and the fresh-clone run is checking a fiction.
+if (configSource.which === "wrangler.jsonc" && existsSync(join(ROOT, "wrangler.jsonc.example"))) {
+  const shape = (c) =>
+    JSON.stringify({
+      keys: Object.keys(c).sort(),
+      kv: (c.kv_namespaces ?? []).map((n) => n.binding).sort(),
+      dobj: (c.durable_objects?.bindings ?? []).map((b) => b.class_name).sort(),
+      migrations: (c.migrations ?? []).map((m) => m.new_sqlite_classes ?? []).flat().sort(),
+      flags: (c.compatibility_flags ?? []).slice().sort(),
+      main: c.main,
+      vars: Object.keys(c.vars ?? {}).sort(),
+    });
+  check(
+    "wrangler.jsonc.example describes the same bindings as wrangler.jsonc",
+    shape(config) === shape(readJsonc(join(ROOT, "wrangler.jsonc.example"))),
+    "The example is what a fresh clone checks, so drift there silently weakens this gate.",
+  );
+}
 
 // ---------------------------------------------------------------------------
 // A. Bindings are an allowlist, derived from the config rather than restated.
@@ -137,6 +185,14 @@ check(
   "Without SQLite the counter is not atomic and the limit does not hold.",
 );
 
+// The deploy target must never be the conformance test entry, which mounts the
+// handler with the client leg and the limiter removed.
+check(
+  "main is the production entry, not the conformance test entry",
+  config.main === "src/index.ts",
+  `Found main=${config.main}. test/conformance-entry.ts is a gate harness and must never deploy.`,
+);
+
 // CIMD needs this flag, and it is what the measured client actually uses.
 check(
   "global_fetch_strictly_public is enabled for CIMD",
@@ -159,7 +215,7 @@ const FORBIDDEN_NAMES = [
   "APP_KV",
 ];
 
-const configText = readFileSync(join(ROOT, "wrangler.jsonc"), "utf8");
+const configText = readFileSync(configSource.path, "utf8");
 for (const name of FORBIDDEN_NAMES) {
   check(
     `wrangler.jsonc does not reference ${name}`,

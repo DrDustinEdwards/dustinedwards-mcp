@@ -1,0 +1,73 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "dustinedwards-mcp",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-07-29",
+
+	// nodejs_compat: required by the MCP SDK.
+	// global_fetch_strictly_public: required by workers-oauth-provider to fetch a
+	//   Client ID Metadata Document. Measured 2026-07-30: claude.ai sends its
+	//   client_id as a URL and never calls a registration endpoint, so CIMD is the
+	//   path a real client actually takes.
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+	"observability": { "enabled": true },
+
+	// Non-secret. The GitHub OAuth App client id is public by design, and
+	// ADMIN_GITHUB_LOGIN is a username or numeric id, not a credential. Prefer the
+	// NUMERIC GitHub user id: a login can be renamed and then claimed by someone
+	// else, an id cannot.
+	"vars": {
+		"OPERATOR_API_URL": "https://dustinedwards.dustin-edwards.workers.dev/api/operator",
+		"ADMIN_GITHUB_LOGIN": "DrDustinEdwards"
+	},
+
+	// BINDINGS ARE AN ALLOWLIST, and check:wrapper derives its expectations from
+	// this block. There is deliberately NO D1, NO R2, and no binding of any kind
+	// that could reach the publish machinery: the only path to it is an HTTP
+	// request to OPERATOR_API_URL. Adding a binding here that touches app data
+	// would break the wrapper's central guarantee, so the gate fails on one.
+	"kv_namespaces": [
+		{
+			// Token and grant storage for workers-oauth-provider.
+			"binding": "OAUTH_KV",
+			"id": "YOUR_OAUTH_KV_ID"
+		},
+		{
+			// Capture log for the client measurement probe.
+			"binding": "PROBE_KV",
+			"id": "YOUR_PROBE_KV_ID"
+		}
+	],
+
+	// The wrapper's own rate limiter. A Durable Object with the SYNCHRONOUS SQLite
+	// API, because that is the only mechanism measured on this account to actually
+	// count: the GA ratelimit binding sheds load permissively, and a DO using
+	// async storage.get then storage.put is not atomic across the await. See
+	// src/rate-limit.ts for the numbers.
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "OPERATOR_RATE_LIMIT",
+				"class_name": "OperatorRateLimit"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["OperatorRateLimit"]
+		}
+	]
+
+	// Secrets, set with `wrangler secret put`, never committed:
+	//   OPERATOR_TOKEN        the API leg. Same value as the dustinedwards
+	//                         Worker's OPERATOR_TOKEN. Identifies WHAT this
+	//                         Worker may do.
+	//   GITHUB_CLIENT_ID      GitHub OAuth App, for the consent step.
+	//   GITHUB_CLIENT_SECRET  ditto.
+	//
+	// The client leg (who is operating) and the API leg (what the wrapper may do)
+	// are never the same value. A client-leg identity failure must read
+	// differently from the API refusing an operation.
+}

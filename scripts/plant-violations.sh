@@ -24,7 +24,7 @@ cd "$(dirname "$0")/.." || exit 2
 SNAP="$(mktemp -d)"
 trap 'rm -rf "$SNAP"' EXIT
 
-FILES="src/tools.ts src/api-client.ts src/legacy-era.ts src/mcp-handler.ts wrangler.jsonc"
+FILES="src/tools.ts src/api-client.ts src/legacy-era.ts src/mcp-handler.ts wrangler.jsonc wrangler.jsonc.example"
 
 snapshot() {
   for f in $FILES; do
@@ -154,8 +154,24 @@ s=s.replace('first-publish-requires-admin','(policy name removed)')
 open(p,'w',encoding='utf-8',newline='').write(s)"
 expect_fail "11. first-publish policy dropped from tool descriptions"
 
+# 12. The example drifting from the real config. The example is what a fresh
+#     clone checks, so drift there silently weakens the whole gate.
+python3 -c "
+p='wrangler.jsonc.example'; s=open(p,encoding='utf-8').read()
+s=s.replace('\"OAUTH_KV\"','\"DRIFTED_KV\"',1)
+open(p,'w',encoding='utf-8',newline='').write(s)"
+expect_fail "12. wrangler.jsonc.example drifted from the real config"
+
+# 13. Pointing the deploy at the conformance harness, which mounts the handler
+#     with the client leg and the rate limiter removed.
+python3 -c "
+p='wrangler.jsonc'; s=open(p,encoding='utf-8').read()
+s=s.replace('\"main\": \"src/index.ts\"','\"main\": \"test/conformance-entry.ts\"',1)
+open(p,'w',encoding='utf-8',newline='').write(s)"
+expect_fail "13. main points at the conformance test entry"
+
 echo
-echo "planted 11: $pass caught, $missed missed, $contaminated contaminated"
+echo "planted 13: $pass caught, $missed missed, $contaminated contaminated"
 final=$(gate)
 echo "final baseline: exit $final"
 if [ "$missed" != "0" ] || [ "$contaminated" != "0" ] || [ "$final" != "0" ]; then
