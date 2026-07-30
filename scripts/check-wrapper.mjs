@@ -53,11 +53,29 @@ function sourceFiles() {
     .map((f) => ({ name: f, text: readFileSync(join(SRC, f), "utf8") }));
 }
 
-/** Strip comments and string literals: assertions about CODE must not match prose. */
+/**
+ * TWO strippers, and picking the wrong one silently disables an assertion.
+ * Verified the hard way: the first version of this gate used codeOnly()
+ * everywhere, and three of eleven planted violations went undetected because the
+ * thing being searched for lived in a string literal that codeOnly() had already
+ * removed.
+ *
+ * withoutComments  strips comments, KEEPS strings. Use for assertions about
+ *                  string CONTENT: urls, paths, config values, option values.
+ * codeOnly         strips comments AND strings. Use for assertions about
+ *                  executable code: identifiers, branches, property access.
+ *
+ * Both strip comments, because this file's own prose and the source's module
+ * headers name the very things being forbidden. A parser that reads comments
+ * finds the documentation before the code, which is a trap this portfolio has now
+ * hit three times.
+ */
+function withoutComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+}
+
 function codeOnly(text) {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/^\s*\/\/.*$/gm, " ")
+  return withoutComments(text)
     .replace(/`(?:\\[\s\S]|[^\\`])*`/g, '""')
     .replace(/"(?:\\.|[^\\"])*"/g, '""')
     .replace(/'(?:\\.|[^\\'])*'/g, '""');
@@ -151,7 +169,7 @@ for (const name of FORBIDDEN_NAMES) {
   for (const f of files) {
     check(
       `src/${f.name} does not reference ${name}`,
-      !codeOnly(f.text).includes(name),
+      !withoutComments(f.text).includes(name),
       `${name} belongs to the app, not to the wrapper.`,
     );
   }
@@ -192,8 +210,10 @@ const URL_RE = /https?:\/\/([a-z0-9.-]+)/gi;
 for (const f of files) {
   for (const m of readFileSync(join(SRC, f.name), "utf8").matchAll(URL_RE)) {
     const host = m[1].toLowerCase();
-    // Documentation links in comments are fine; only flag hosts in real code.
-    if (!codeOnly(f.text).includes(host)) continue;
+    // Documentation links in comments are fine, so comments are stripped, but
+    // the host lives in a STRING literal and codeOnly() would delete it. That
+    // mistake let a planted exfiltration host through undetected.
+    if (!withoutComments(f.text).includes(host)) continue;
     check(
       `src/${f.name} outbound host ${host} is allowlisted`,
       ALLOWED_HOSTS.includes(host),
@@ -204,7 +224,7 @@ for (const f of files) {
 
 check(
   "The operator API URL comes from config, not a literal in source",
-  files.every((f) => !codeOnly(f.text).includes("/api/operator")),
+  files.every((f) => !withoutComments(f.text).includes("/api/operator")),
   "Hardcoding it would survive a config change and reach the wrong environment.",
 );
 
@@ -231,7 +251,7 @@ for (const name of EXPECTED_TOOLS) {
 }
 
 // The API leg's credential is confined to the module that owns it.
-const tokenHolders = files.filter((f) => codeOnly(f.text).includes("OPERATOR_TOKEN")).map((f) => f.name);
+const tokenHolders = files.filter((f) => withoutComments(f.text).includes("OPERATOR_TOKEN")).map((f) => f.name);
 check(
   "OPERATOR_TOKEN appears only in api-client.ts",
   JSON.stringify(tokenHolders) === JSON.stringify(["api-client.ts"]),
@@ -295,7 +315,7 @@ for (const f of files) {
   for (const marker of FORBIDDEN_GATE_MARKERS) {
     check(
       `src/${f.name} does not re-implement the app's ${marker} gate`,
-      !codeOnly(f.text).includes(marker),
+      !withoutComments(f.text).includes(marker),
       "The gates run server side in the app. There is exactly one copy of each.",
     );
   }
@@ -319,25 +339,35 @@ if (legacyText) {
     /REMOVAL CONDITION/.test(legacyText) && /probe-report/.test(legacyText),
     "A shim without a stated removal condition becomes permanent by default.",
   );
-  const legacyUsers = files
-    .filter((f) => f.name !== "legacy-era.ts" && codeOnly(f.text).includes("createLegacyEraHandler"))
-    .map((f) => f.name);
+  // Counting FILES was wrong: two calls inside one file kept the count at 1 and a
+  // planted second call site went undetected. Count the calls themselves.
+  const callSites = files
+    .filter((f) => f.name !== "legacy-era.ts")
+    .flatMap((f) =>
+      [...codeOnly(f.text).matchAll(/createLegacyEraHandler\s*\(/g)].map(() => f.name),
+    );
   check(
     "The legacy shim has exactly one call site",
-    legacyUsers.length === 1,
-    `Called from: ${legacyUsers.join(", ") || "(nowhere)"}. More than one and it is no longer a seam.`,
+    callSites.length === 1,
+    `Call sites: ${callSites.join(", ") || "(none)"}. More than one and it is no longer a seam.`,
   );
+  // These are STRING option values, so comments are stripped but literals are
+  // kept. Reading the raw file instead would let the module header's prose
+  // satisfy the assertion, which is exactly how a planted era switch survived.
+  const legacyCode = withoutComments(readFileSync(legacyPath, "utf8"));
+  const handlerCode = withoutComments(readFileSync(join(SRC, "mcp-handler.ts"), "utf8"));
+
   check(
-    'Only the shim serves prior-era traffic (legacy: "stateless" appears once)',
-    (readFileSync(legacyPath, "utf8").match(/legacy:\s*"stateless"/g) ?? []).length === 1 &&
+    'Only the shim serves prior-era traffic (legacy: "stateless" appears once, in the shim)',
+    (legacyCode.match(/legacy:\s*"stateless"/g) ?? []).length === 1 &&
       files
         .filter((f) => f.name !== "legacy-era.ts")
-        .every((f) => !/legacy:\s*"stateless"/.test(codeOnly(f.text))),
-    "The primary handler must be legacy: \"reject\" so deleting the shim leaves a modern-only server.",
+        .every((f) => !/legacy:\s*"stateless"/.test(withoutComments(f.text))),
+    'The primary handler must be legacy: "reject" so deleting the shim leaves a modern-only server.',
   );
   check(
     'The primary handler is modern-only (legacy: "reject")',
-    /legacy:\s*"reject"/.test(readFileSync(join(SRC, "mcp-handler.ts"), "utf8")),
+    /legacy:\s*"reject"/.test(handlerCode) && !/legacy:\s*"stateless"/.test(handlerCode),
   );
 }
 

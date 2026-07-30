@@ -9,7 +9,8 @@
     "deploy": "wrangler deploy",
     "typecheck": "wrangler types && tsc -b",
     "probe:captures": "node scripts/probe-report.mjs",
-    "check:wrapper": "node scripts/check-wrapper.mjs"
+    "check:wrapper": "node scripts/check-wrapper.mjs",
+    "check:wrapper:plant": "bash scripts/plant-violations.sh"
   },
   "devDependencies": {
     "typescript": "^6.0.3",
