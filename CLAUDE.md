@@ -59,8 +59,31 @@ changelog. Re-run `scripts/probe-report.mjs` against a real client and change it
 from the capture. The probe exists for this and stays in the repo.
 
 Measured 2026-07-29: Claude Code 2.1.203 is LEGACY (opens `initialize` at
-`2025-11-25`, no `Mcp-Method`/`Mcp-Name`, opens a GET SSE stream). So the shim is
-load-bearing right now. claude.ai is not yet measured.
+`2025-11-25`, no `Mcp-Method`/`Mcp-Name`, opens a GET SSE stream).
+
+Measured 2026-07-30: claude.ai (`clientInfo.name` = `Anthropic`) is ALSO LEGACY,
+same `2025-11-25`, no `Mcp-Method`/`Mcp-Name`, no `_meta` protocolVersion.
+
+Two independent clients, different infrastructure, both legacy. The shim is
+load-bearing right now.
+
+## Client leg is settled, and the two traps in it
+
+OAuth 2.1 resource server per the spec, because claude.ai was measured completing
+the whole flow: RFC 9728, RFC 8414, RFC 8707 audience binding, PKCE S256. No
+bearer fallback and no dated debt; the standard only permits those where the
+measured client CANNOT complete the flow.
+
+- **CIMD, not DCR.** claude.ai sends `client_id` as the URL
+  `https://claude.ai/oauth/mcp-oauth-client-metadata` and never calls `/register`.
+  Do not build a dynamic client registration endpoint; `2026-07-28` deprecates
+  RFC 7591 in favour of CIMD anyway. `@cloudflare/workers-oauth-provider` 0.8.3
+  wants `clientIdMetadataDocumentEnabled: true` plus the
+  `global_fetch_strictly_public` compatibility flag.
+- **PRM must answer the PATH-SCOPED route.** claude.ai requests
+  `/.well-known/oauth-protected-resource/mcp` BEFORE the bare
+  `/.well-known/oauth-protected-resource`. A server handling only the bare form
+  misses its first request.
 
 ## Errors are relayed VERBATIM
 

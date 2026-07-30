@@ -73,14 +73,53 @@ made required, by `2026-07-28`. It is a **legacy-era client.** It does, however,
 walk RFC 9728 correctly: `401` to protected resource metadata to authorization
 server metadata.
 
-**claude.ai:** pending. It is the stated consumer, so the client-leg auth
-decision waits on it.
+**claude.ai, measured 2026-07-30** against this probe on the live deploy. Its
+`clientInfo` is `{name: "Anthropic", version: "1.0.0"}` and it is also a
+**legacy-era client**: opens `initialize` declaring `2025-11-25`, sends neither
+`Mcp-Method` nor `Mcp-Name`, and carries no `_meta` protocolVersion. Two agents
+are involved: server-side discovery from `python-httpx/0.28.1`, then the consent
+redirect in the operator's own browser.
 
-Consequence: `2026-07-28` is the primary and design-center era, and prior-era
-support lives in exactly one seam, `src/legacy-era.ts`, carrying its own removal
-condition. **The shim is load-bearing today, not vestigial.** It goes when the
-probe shows the target clients opening with `server/discover`, which is why the
-probe stays in the repo as the instrument that answers the question.
+Two independent clients on different infrastructure, both legacy. Consequence:
+`2026-07-28` is the primary and design-center era, and prior-era support lives in
+exactly one seam, `src/legacy-era.ts`, carrying its own removal condition.
+**The shim is load-bearing today, not vestigial.** It goes when the probe shows
+the target clients opening with `server/discover`, which is why the probe stays
+in the repo as the instrument that answers the question.
+
+## Client-leg auth: the spec's OAuth story, because the client completes it
+
+The house standard makes this conditional on measurement: the spec's own OAuth
+2.1 resource server story, with a bearer fallback ONLY if the measured client
+cannot complete the flow. It can, so there is no fallback and no dated debt.
+
+Measured against claude.ai, 2026-07-30:
+
+| Requirement | Result |
+|---|---|
+| RFC 9728 protected resource metadata | YES, and it requests the path-scoped `/.well-known/oauth-protected-resource/mcp` FIRST |
+| RFC 8414 authorization server metadata | YES |
+| RFC 8707 audience binding | YES, `resource` = this server's `/mcp` URL |
+| PKCE S256 | YES |
+| Client identity | **CIMD, not DCR.** `client_id` is the URL `https://claude.ai/oauth/mcp-oauth-client-metadata`, and `/register` was never called |
+| Redirect URI | `https://claude.ai/api/mcp/auth_callback` |
+
+Two consequences for the build. Dynamic client registration is **not needed**,
+which matches `2026-07-28` deprecating RFC 7591 in favour of CIMD. And the PRM
+route must answer the **path-scoped** form, not only the bare one; a server that
+only handles `/.well-known/oauth-protected-resource` would miss claude.ai's first
+request.
+
+`@cloudflare/workers-oauth-provider` 0.8.3 supports this directly via
+`clientIdMetadataDocumentEnabled`, which requires the
+`global_fetch_strictly_public` compatibility flag. That is the same library the
+capsid MCP uses, so the precedent covers the measured flow.
+
+**Caveat on the instrument.** The probe serves PRM unconditionally, so its `open`
+phase was never truly authless, which is why claude.ai authenticated despite a
+`200` on `initialize`. That produced both measurements in one connector add. It
+also means whether claude.ai would accept a genuinely authless server is
+UNMEASURED here, and is not claimed either way.
 
 ## Gates
 
