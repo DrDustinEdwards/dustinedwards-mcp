@@ -8,18 +8,60 @@ House standard: Capsid `capsid/mcp-wrapper-standard.md`, ratified 2026-07-30.
 This repo is the reference implementation that standard describes; the foxing
 Workers port and the foxhound ops MCP copy its shape at their cutovers.
 
-## Status: measurement stage
+## Status: VERIFIED END TO END, 2026-07-30
 
-The tool surface is **not built yet**, and that is deliberate sequencing rather
-than an unfinished thought. The MCP `2026-07-28` revision shipped final on
-2026-07-28 and removed the `initialize` handshake, sessions, the GET stream and
-server-initiated requests. The spec's own compatibility matrix says a legacy
-client talking to a modern server **fails, with no fall-forward**. So which era
-this wrapper targets is a question about what real clients actually send, and the
-only honest way to answer it is to measure.
+Run from a real MCP client through the real OAuth flow, against production.
 
-Right now this Worker is only the probe in `src/probe.ts`. See
-[Era targeting](#era-targeting) for what has been measured so far.
+| Step | Result |
+|---|---|
+| OAuth 2.1 flow | CIMD client resolved by name, PKCE S256, GitHub admin gate, token issued |
+| Legacy `initialize` (2025-11-25) | 200 |
+| Modern `server/discover` (2026-07-28) | 200, `supportedVersions: ["2026-07-28"]` |
+| `tools/list` | 5 tools, annotations correct (`delete_post` destructive, reads read-only) |
+| `list_posts` / `get_post` / `sync_status` | correct, `headSha` matching the repo |
+| `save_post` create draft | commit `4686349c`, `askSync uploaded 0` (drafts stay out of the AI index) |
+| **first-publish attempt** | **refused 403 `first-publish-requires-admin`, prose verbatim** |
+| `save_post` edit | commit `8043683f` |
+| wide-dash gate | refused, verbatim, naming line 10 column 18 |
+| invalid slug | refused at the schema, before any HTTP round trip |
+| `delete_post` | commit `e2417aa5` |
+| Commits on `main` | all three carry `[operator:cb8eb348]`, each atomic (markdown + artifact) |
+| Site's `check:content` afterwards | green, so the operator path never leaves the repo mid-gate |
+| Rate limiter | 45 concurrent requests: 28 allowed, 17 refused with `Retry-After` |
+
+**The `resource` risk did not materialise.** Token exchange succeeded with a
+path-qualified `resource` against a PRM advertising origin-only, so
+`resourceMatchOriginOnly` is NOT needed and remains unset at the strict RFC 8707
+default.
+
+**Two findings from the run, neither a wrapper bug.**
+
+1. **`_meta` belongs inside `params`**, not at the top level of the JSON-RPC
+   message. A top-level `_meta` is rejected `-32600` "not a valid JSON-RPC
+   message", which reads like a server fault and is a malformed client. Exactly
+   the class of mistake the conformance suite exists to catch.
+2. **Every pre-existing post has `first_published: null`**, including the one that
+   is live, because they predate the stamping mechanism. So `operatorMayPublish`
+   is false for all of them, and if the live post were ever unpublished an operator
+   could not republish it. That is an app-side data gap, not a wrapper concern.
+
+**Not verified:** the adds-nothing claim by running the same operations RAW
+against the operator API and diffing. That needs `OPERATOR_TOKEN` in a shell.
+What is verified is that the commits, the gate prose, the policy name and the
+`[operator:...]` marker are the API's own, unmodified.
+
+## How it was built: measurement stage
+
+The era this wrapper targets was decided by MEASUREMENT before a line of the tool
+surface was written, and that sequencing was deliberate. The MCP `2026-07-28`
+revision shipped final on 2026-07-28 and removed the `initialize` handshake,
+sessions, the GET stream and server-initiated requests. The spec's own
+compatibility matrix says a legacy client talking to a modern server **fails, with
+no fall-forward**. So the first commit in this repo was the probe in
+`src/probe.ts`, not the wrapper, and the probe is still here as the instrument
+that answers the shim's removal condition.
+
+See [Era targeting](#era-targeting) for what it measured.
 
 ## The law
 
