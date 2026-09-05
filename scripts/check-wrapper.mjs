@@ -289,11 +289,38 @@ check(
 // ---------------------------------------------------------------------------
 
 const toolsText = readFileSync(join(SRC, "tools.ts"), "utf8");
-const EXPECTED_TOOLS = ["list_posts", "get_post", "save_post", "delete_post", "sync_status"];
+/*
+ * THE API'S TOOL LIST, MIRRORED BY HAND, and the mirror is deliberate.
+ *
+ * This gate cannot read the site's repository, so the list cannot be derived.
+ * That makes it the one hand-kept copy in a file whose whole subject is that
+ * the wrapper adds nothing: a tool declared here and absent from the API would
+ * be a policy decision made in the wrapper, which is what section E exists to
+ * refuse.
+ *
+ * The cost of a hand mirror is that it goes stale in the SAFE direction only.
+ * A tool added to the API and not here is simply unavailable through MCP; a
+ * tool added here and not to the API fails this assertion on the next run. The
+ * asymmetry is why a hand list is acceptable at all.
+ *
+ * GREW TO SEVEN 2026-09-05 with the moderation queue. Approving a webmention
+ * was the last step in that path that needed a human with a browser, and it
+ * was proven to work by asking one to click a button so a cache purge could be
+ * measured. A step only a human can take is a step taken late.
+ */
+const EXPECTED_TOOLS = [
+  "list_posts",
+  "get_post",
+  "save_post",
+  "delete_post",
+  "sync_status",
+  "list_mentions",
+  "decide_mention",
+];
 const declared = [...toolsText.matchAll(/^\s{4}name:\s*"([a-z_]+)",$/gm)].map((m) => m[1]);
 
 check(
-  "The five tools are exactly the operator API's tools",
+  "The declared tools are exactly the operator API's tools",
   JSON.stringify(declared) === JSON.stringify(EXPECTED_TOOLS),
   `Expected [${EXPECTED_TOOLS.join(", ")}] but found [${declared.join(", ")}]. ` +
     "A tool the API does not offer would be a policy decision made here.",
@@ -434,7 +461,9 @@ if (failures) {
   console.error(`\n${failures} failed. The wrapper's no-policy law is not currently provable.`);
   process.exit(1);
 }
-console.log("The no-policy law holds: no app imports, no app bindings, five tools, one API seam.");
+console.log(
+  `The no-policy law holds: no app imports, no app bindings, ${EXPECTED_TOOLS.length} tools, one API seam.`,
+);
 
 /*
  * PLANTED VIOLATIONS. See scripts/plant-violations.sh, which is the harness that

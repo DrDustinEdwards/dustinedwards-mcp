@@ -1,5 +1,5 @@
 /**
- * The five tools.
+ * The seven tools.
  *
  * FEW tools, exact names, one job each, mirroring the operator API exactly. No
  * convenience composites: composition is the agent's job, and a composite here
@@ -46,6 +46,16 @@ const headShaSchema = z
       "Omit for an unconditional save. Supplying it means the save is refused with " +
       "409 if main moved since you read the post.",
   );
+
+const DELETE_MENTION_POLICY =
+  "POLICY, enforced by the API and not by this wrapper: an operator may approve " +
+  "and reject a mention, which are reversible. It may NOT delete one. A mention " +
+  "row came from a stranger's POST, there is no repository behind it and no " +
+  "derivation that could produce it again, so deleting is reserved to the human " +
+  "admin and is refused with HTTP 403 and policy name " +
+  "'mention-delete-requires-admin'. That refusal is the system working " +
+  "correctly, not an error to retry. Reject instead: it removes the mention " +
+  "from the post and can be undone.";
 
 const FIRST_PUBLISH_POLICY =
   "POLICY, enforced by the API and not by this wrapper: an operator may create, " +
@@ -263,4 +273,65 @@ export const TOOLS: ToolDefinition[] = [
     },
     handler: (env) => run(env, "sync_status", {}),
   },
+{
+    name: "list_mentions",
+    config: {
+      title: "List webmentions",
+      description:
+        "Lists webmentions other sites have sent to dustinedwards.info, newest " +
+        "decision first. Returns id, source, target slug, status, author, " +
+        "excerpt, failureReason and the received, verified and decided " +
+        "timestamps for each. " +
+        "Statuses: 'unverified' (received, not yet fetched), 'pending' (the " +
+        "source really links here and it is awaiting a decision), 'approved' " +
+        "(published under the post), 'rejected' (turned down), 'failed' (the " +
+        "source could not be fetched or did not link here, with the reason). " +
+        "Unfiltered by default, which is what the moderation queue shows: the " +
+        "failures matter, because an empty pending list means something " +
+        "different from a list of failures. Pass status to narrow it. " +
+        "Call this before decide_mention to get the ids.",
+      inputSchema: z.object({
+        status: z
+          .enum(["unverified", "pending", "approved", "rejected", "failed"])
+          .optional()
+          .describe("Optional. Narrow the list to one status. Omit for the whole queue."),
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    handler: (env, args) =>
+      run(env, "list_mentions", args.status ? { status: args.status } : {}),
+  },
+
+  {
+    name: "decide_mention",
+    config: {
+      title: "Decide a webmention",
+      description:
+        "Approves, rejects or deletes one received webmention by id. " +
+        "Approving publishes it under the target post as escaped text with a " +
+        "validated link, and PURGES that post's cached page, so the change " +
+        "reaches readers on the next fetch rather than after the ten minute " +
+        "shared-cache lifetime. Rejecting removes it from the post the same " +
+        "way. Approve and reject are a two-way door: either can be applied to " +
+        "a mention that is currently the other. " +
+        "Only a mention that has been VERIFIED can be decided. One that is " +
+        "still 'unverified', or that 'failed' verification, returns " +
+        "changed:false rather than an error, because there is no evidence to " +
+        "approve and retrying will not change that. " +
+        DELETE_MENTION_POLICY,
+      inputSchema: z.object({
+        id: z
+          .number()
+          .int()
+          .positive()
+          .describe("The mention's id, from list_mentions."),
+        decision: z
+          .enum(["approve", "reject", "delete"])
+          .describe("approve, reject or delete."),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    handler: (env, args) => run(env, "decide_mention", { id: args.id, decision: args.decision }),
+  },
 ];
+
