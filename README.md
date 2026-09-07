@@ -1,8 +1,8 @@
 # dustinedwards-mcp
 
 An MCP wrapper over the [dustinedwards.info](https://dustinedwards.info) operator
-publish API. It exposes five tools to an AI agent and **contains no policy of its
-own**.
+publish API. It exposes seven tools to an AI agent and **contains no policy of
+its own**.
 
 House standard: Capsid `capsid/mcp-wrapper-standard.md`, ratified 2026-07-30.
 This repo is the reference implementation that standard describes; the foxing
@@ -168,9 +168,9 @@ UNMEASURED here, and is not claimed either way.
 | Gate | Proves | State |
 |---|---|---|
 | `npm run typecheck` | `wrangler types && tsc -b` | green |
-| `npm run build` | `wrangler deploy --dry-run`. 1,146.62 KiB raw, 205.49 KiB gzip | green |
-| `npm run check:wrapper` | the no-policy law, mechanically. 223 assertions | green, 11/11 planted violations caught |
-| `npm run check:wrapper:plant` | that `check:wrapper` actually fails | 11 caught, 0 missed |
+| `npm run build` | a dry-run bundle. 1,149.76 KiB raw, 206.42 KiB gzip, measured 2026-09-07 on wrangler 4.129.0 | green |
+| `npm run check:wrapper` | the no-policy law, mechanically. 227 assertions | green, 13/13 planted violations caught |
+| `npm run check:wrapper:plant` | that `check:wrapper` actually fails | 13 caught, 0 missed |
 | `npm run check:conformance` | the official suite against the real protocol layer, per era | **baseline, not a clean sweep** |
 
 `npm run build` exists because **typecheck is not a build.** Two commits shipped

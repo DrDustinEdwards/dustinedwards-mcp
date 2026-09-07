@@ -17,7 +17,7 @@
   "devDependencies": {
     "@modelcontextprotocol/conformance": "^0.2.0-alpha.10",
     "typescript": "^6.0.3",
-    "wrangler": "^4.107.0"
+    "wrangler": "4.129.0"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.8.3",
