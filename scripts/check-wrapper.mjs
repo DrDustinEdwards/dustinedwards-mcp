@@ -307,6 +307,17 @@ const toolsText = readFileSync(join(SRC, "tools.ts"), "utf8");
  * was the last step in that path that needed a human with a browser, and it
  * was proven to work by asking one to click a button so a cache purge could be
  * measured. A step only a human can take is a step taken late.
+ *
+ * GREW TO EIGHT 2026-09-07 with `upload_media`, on that same reasoning one step
+ * further along: an agent could write a post about anything except a picture,
+ * because putting an image on the site needed the browser editor. The API side
+ * is an adapter over the one door `/admin/media/upload` already used, so this
+ * list growing does not mean a second write path into the bucket exists.
+ *
+ * NOT EVERY API TOOL IS HERE, which is why this list is shorter than the API's
+ * and is not the mirror going stale. The four sync and backup repairs are
+ * called by `ship` and by the watchdog; exposing an unattended index rebuild to
+ * a chat client would be a policy decision made here.
  */
 const EXPECTED_TOOLS = [
   "list_posts",
@@ -316,6 +327,7 @@ const EXPECTED_TOOLS = [
   "sync_status",
   "list_mentions",
   "decide_mention",
+  "upload_media",
 ];
 const declared = [...toolsText.matchAll(/^\s{4}name:\s*"([a-z_]+)",$/gm)].map((m) => m[1]);
 

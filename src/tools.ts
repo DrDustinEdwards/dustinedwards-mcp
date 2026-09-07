@@ -1,5 +1,5 @@
 /**
- * The seven tools.
+ * The eight tools.
  *
  * FEW tools, exact names, one job each, mirroring the operator API exactly. No
  * convenience composites: composition is the agent's job, and a composite here
@@ -332,6 +332,102 @@ export const TOOLS: ToolDefinition[] = [
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     handler: (env, args) => run(env, "decide_mention", { id: args.id, decision: args.decision }),
+  },
+
+  {
+    name: "upload_media",
+    config: {
+      title: "Upload an image",
+      description:
+        "Uploads one image to the site's media bucket and returns the url to put " +
+        "in a post's markdown. The url is a content-addressed /media/ path: the " +
+        "key is a digest of the bytes, so uploading the same image twice yields " +
+        "the same url and one object rather than two.\n\n" +
+        "TWO WAYS TO SUPPLY THE IMAGE, and exactly one of them per call. `url` " +
+        "is an https URL the site fetches server side, and it is the one to " +
+        "prefer: a photograph is several megabytes and base64 makes it a third " +
+        "larger again, which is not something to carry through a conversation. " +
+        "`data` is base64, or a whole data: URI, for an image you already hold.\n\n" +
+        "Returns url, key, bytes, width, height and `recorded`. Width and height " +
+        "are null for an SVG, which has no intrinsic pixel size; that is a fact " +
+        "about vectors and not a failure. `recorded:false` means the object " +
+        "landed in the bucket and its annotation row did not, which is worth " +
+        "telling the human because the library will show it without dimensions " +
+        "until a sync_media rebuild derives them.\n\n" +
+        "POLICY, enforced by the API and not by this wrapper: it accepts webp, " +
+        "png, jpeg, avif, gif and svg and nothing else, refuses anything over " +
+        "10 MB, refuses a file whose bytes are markup when it was declared as a " +
+        "raster, and fetches https URLs only. There is NO delete tool over this " +
+        "credential, so an object uploaded here stays until the human admin " +
+        "removes it: upload the image you mean to use rather than several to " +
+        "choose between.\n\n" +
+        "Nothing about this publishes anything. An uploaded image is not " +
+        "referenced by any post until a save_post puts its url in one.",
+      inputSchema: z.object({
+        data: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Optional. The image as base64, or as a full data:<type>;base64,<payload> " +
+              "URI. Supply this OR url, never both.",
+          ),
+        url: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Optional. An https URL the site fetches server side. Supply this OR data, " +
+              "never both. Preferred for anything but a very small image.",
+          ),
+        type: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Optional. The image MIME type, e.g. image/png. Defaults to the data: " +
+              "URI's own type or the fetched response's Content-Type. Supply it when " +
+              "the source serves application/octet-stream.",
+          ),
+        name: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Optional. The filename to record as the image's original name. The " +
+              "content-addressed key cannot carry it, so this is the only place it " +
+              "survives. Defaults to the URL's last path segment.",
+          ),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        /*
+         * NOT destructive, and this one is worth stating rather than assuming.
+         * The key is a digest of the bytes, so the only object a second upload
+         * can land on is the byte-identical one it just recomputed: there is no
+         * input that makes this replace anything. What it can do is ADD an
+         * object that nothing later removes over this credential, which is what
+         * openWorldHint and the no-delete sentence in the description carry.
+         *
+         * Idempotent for the same reason, and genuinely rather than nearly:
+         * calling it twice with the same image leaves the bucket exactly as one
+         * call does and returns the same url.
+         */
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    handler: (env, args) =>
+      run(env, "upload_media", {
+        // Only what was actually supplied. The API refuses "both" and "neither"
+        // by name, and forwarding an empty string would turn "neither" into
+        // "both" and produce the wrong refusal.
+        ...(args.data ? { data: args.data } : {}),
+        ...(args.url ? { url: args.url } : {}),
+        ...(args.type ? { type: args.type } : {}),
+        ...(args.name ? { name: args.name } : {}),
+      }),
   },
 ];
 
