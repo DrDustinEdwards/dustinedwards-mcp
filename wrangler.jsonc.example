@@ -2,14 +2,20 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "dustinedwards-mcp",
 	"main": "src/index.ts",
-	"compatibility_date": "2026-07-29",
+	"compatibility_date": "2026-09-01",
 
-	// nodejs_compat: required by the MCP SDK.
 	// global_fetch_strictly_public: required by workers-oauth-provider to fetch a
 	//   Client ID Metadata Document. Measured 2026-07-30: claude.ai sends its
 	//   client_id as a URL and never calls a registration endpoint, so CIMD is the
 	//   path a real client actually takes.
-	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	//
+	// `nodejs_compat` IS GONE AND STILL IN FORCE. The MCP SDK needs it and gets
+	// it: at a compatibility date of 2026-08-04 or later the runtime enables
+	// both nodejs_compat and nodejs_compat_v2 by default, so naming one here is
+	// a flag the runtime ignores and a reader takes for a decision. Turning
+	// Node compatibility off at this date is `no_nodejs_compat`, not the
+	// absence of the positive flag.
+	"compatibility_flags": ["global_fetch_strictly_public"],
 
 	"observability": { "enabled": true },
 
