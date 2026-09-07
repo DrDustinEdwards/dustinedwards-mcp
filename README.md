@@ -213,11 +213,33 @@ in `src/probe.ts` has it opening `GET /mcp` and completing that walk as far as
 the AS metadata, so its behaviour changed between the two captures and the probe
 note describes a client that no longer exists.
 
-The control experiment this points at, and which has NOT been run: add a second
-Grok entry pointing at capsid under a new server name. Capsid holds a working
-credential minted at some earlier date, so it proves the flow worked once, not
-that it works today. If a fresh entry against capsid also fails to authenticate,
-nothing on this side is the cause.
+**THE CONTROL SETTLES IT, AND IT INVALIDATES THE COMPARISON BOTH DEPLOYS RESTED
+ON.** A second Grok entry pointing at capsid under a new server name,
+`capsid-test`, was added and connected at 20:22 on 2026-09-07. It failed exactly
+the way this server fails: one `POST /mcp`, a `401`, nothing after it, and no
+credential minted. Read from the capsid Worker's own observability, the only
+non-`/mcp` request in the whole half hour was a single `POST /token` returning
+`200`, with no `/authorize` and no `/register` anywhere near it. A token grant
+with no authorization before it is a REFRESH, which is the existing `capsid`
+entry renewing, and it is what the successful `/mcp` traffic beside it belongs
+to.
+
+So capsid was never a working comparison. It works because it holds a refresh
+token minted by an EARLIER Grok build and never re-runs the authorization flow.
+Every server this build must authenticate FRESH fails identically, on
+infrastructure that had no changes made to it. The differential that motivated
+both the pin and the CIMD test was reading a legacy artifact.
+
+**The defect is in Grok Build 1.0.13 and nothing on this side reaches it.**
+Across three metadata shapes here and a fourth server entirely, the client takes
+a well-formed `401` naming a path-scoped PRM that answers `200` and does not make
+the first discovery request. The capture in `src/probe.ts` has it completing that
+walk earlier the same day, so this is a regression between two captures hours
+apart, not a configuration fault.
+
+The order was wrong and the lesson is cheap to state: THE CONTROL COMES FIRST. A
+server that "works" on a stored credential proves nothing about a flow, and one
+`capsid-test` entry would have cost two minutes and saved two deploys.
 
 **Caveat on the instrument.** The probe serves PRM unconditionally, so its `open`
 phase was never truly authless, which is why claude.ai authenticated despite a

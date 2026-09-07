@@ -30,6 +30,27 @@
  *                                      RFC 7591 DCR, not CIMD. No POST was ever
  *                                      sent. Discovery walk read from the Worker
  *                                      logs, since it hit the real AS routes.
+ *   Grok Build 1.0.13     2026-09-07   SUPERSEDES THE ROW ABOVE, six hours later
+ *                     (later, 17:41)   the same day. It no longer walks discovery
+ *                                      AT ALL: it sends POST /mcp carrying no
+ *                                      Authorization and no mcp-protocol-version,
+ *                                      takes the 401, and stops. No PRM fetch, no
+ *                                      AS metadata fetch, no /register, no
+ *                                      /authorize, and pressing the connector's
+ *                                      authenticate key emits no request at all.
+ *                                      Measured against three metadata shapes
+ *                                      here (0.8.3; 0.10.3; 0.10.3 with CIMD off,
+ *                                      which was byte-identical to capsid's) and
+ *                                      against the capsid Worker itself via a
+ *                                      fresh capsid-test entry, which failed the
+ *                                      same way with no changes made to it.
+ *                                      Capsid's apparent health is a REFRESH
+ *                                      TOKEN minted by an earlier build, not a
+ *                                      working flow. So this is a client
+ *                                      regression between two captures hours
+ *                                      apart and no server change reaches it.
+ *                                      Read from wrangler tail, confirmed against
+ *                                      the observability API.
  *
  * Read captures with `node scripts/probe-report.mjs`, which goes through the
  * Cloudflare API. There is no HTTP control plane on purpose: a log describing a
