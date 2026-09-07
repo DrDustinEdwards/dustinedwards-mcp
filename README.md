@@ -183,11 +183,41 @@ unauthenticated `POST /mcp`, took the `401`, and never followed the
 `WWW-Authenticate` pointer to discovery. Nothing else reached the Worker, and
 pressing the connector's authenticate key emitted no request at all. The capsid
 MCP authenticates from that same Grok build on the same machine and was running
-0.10.3 while this Worker ran 0.8.3, which is the difference this pin closes. The
-other differences that fell out of that comparison, and which remain untested as
-causes, are that capsid does not enable CIMD, offers `S256` alone rather than
-`plain` beside it, and advertises
-`authorization_response_iss_parameter_supported`.
+0.10.3 while this Worker ran 0.8.3, which is the difference this pin closed.
+
+**THE PIN DID NOT FIX GROK, AND NEITHER DID DISABLING CIMD.** Both were measured
+the same afternoon and both came back negative, so the pin stands on its own
+merits and not as a repair.
+
+Under 0.10.3 the client sent six `POST /mcp` in one connect, every one of them
+unauthenticated, every one taking the `401` without following it. The bump did
+close three real differences with capsid on its own: `code_challenge_methods_supported`
+went from `["plain","S256"]` to `["S256"]`, `authorization_response_iss_parameter_supported`
+appeared, and the `WWW-Authenticate` lost its `error`/`error_description` pair.
+
+That left CIMD as the only field still differing, so it was set false in a
+working-tree deploy that was never committed, because `check:wrapper` pins the
+flag on and the gate was not going to be weakened for a diagnostic. With that
+deploy live the authorization server metadata was byte-identical to capsid's on
+every non-URL field, verified by diffing the two live documents. Grok sent one
+`POST /mcp`, took the `401`, and walked nothing. Confirmed against the
+observability API as well as the tail, one request in the whole window. CIMD was
+restored and redeployed immediately.
+
+So the cause is not in this authorization server's metadata: across three
+distinct metadata shapes the client never read the document at all. What is
+established is narrow and worth keeping. Grok reaches `/mcp`, receives a
+well-formed `401` whose `WWW-Authenticate` names a path-scoped PRM that answers
+`200`, and does not take the first step of the walk. The earlier capture recorded
+in `src/probe.ts` has it opening `GET /mcp` and completing that walk as far as
+the AS metadata, so its behaviour changed between the two captures and the probe
+note describes a client that no longer exists.
+
+The control experiment this points at, and which has NOT been run: add a second
+Grok entry pointing at capsid under a new server name. Capsid holds a working
+credential minted at some earlier date, so it proves the flow worked once, not
+that it works today. If a fresh entry against capsid also fails to authenticate,
+nothing on this side is the cause.
 
 **Caveat on the instrument.** The probe serves PRM unconditionally, so its `open`
 phase was never truly authless, which is why claude.ai authenticated despite a
