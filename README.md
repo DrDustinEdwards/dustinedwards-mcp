@@ -122,7 +122,14 @@ server metadata.
 are involved: server-side discovery from `python-httpx/0.28.1`, then the consent
 redirect in the operator's own browser.
 
-Two independent clients on different infrastructure, both legacy. Consequence:
+**Grok Build 1.0.13, measured 2026-09-07** against the probe and the Worker
+logs. Also **legacy-era**, and further back than either: it opens `GET /mcp`
+declaring `mcp-protocol-version: 2024-11-05`, and it never reached a POST at
+all, because its rmcp auth middleware ran discovery first (path-scoped PRM,
+then RFC 8414), found no `registration_endpoint`, and stopped. See the
+client-leg section below for what that forced.
+
+Three independent clients on different infrastructure, all legacy. Consequence:
 `2026-07-28` is the primary and design-center era, and prior-era support lives in
 exactly one seam, `src/legacy-era.ts`, carrying its own removal condition.
 **The shim is load-bearing today, not vestigial.** It goes when the probe shows
@@ -146,11 +153,23 @@ Measured against claude.ai, 2026-07-30:
 | Client identity | **CIMD, not DCR.** `client_id` is the URL `https://claude.ai/oauth/mcp-oauth-client-metadata`, and `/register` was never called |
 | Redirect URI | `https://claude.ai/api/mcp/auth_callback` |
 
-Two consequences for the build. Dynamic client registration is **not needed**,
-which matches `2026-07-28` deprecating RFC 7591 in favour of CIMD. And the PRM
-route must answer the **path-scoped** form, not only the bare one; a server that
-only handles `/.well-known/oauth-protected-resource` would miss claude.ai's first
-request.
+Two consequences for the build as measured then. Dynamic client registration
+was **not needed by any measured client**, which matches `2026-07-28`
+deprecating RFC 7591 in favour of CIMD. And the PRM route must answer the
+**path-scoped** form, not only the bare one; a server that only handles
+`/.well-known/oauth-protected-resource` would miss claude.ai's first request.
+
+**The first half of that was superseded by measurement on 2026-09-07.** Grok
+Build 1.0.13's rmcp client is the counterexample the earlier note said did not
+exist: it cannot do CIMD and requires RFC 7591 dynamic registration. Against
+metadata carrying no `registration_endpoint` it cannot mint a client identity,
+so it cannot build an authorization URL, and it stops at "OAuth authorization
+required" without ever opening a browser. So the server now carries **both
+identity paths**: `clientIdMetadataDocumentEnabled: true` for claude.ai, and
+`clientRegistrationEndpoint: "/register"` for Grok. Registration only mints a
+client identity; a grant is still issued solely through the GitHub consent flow,
+and `isAdminUser` still admits exactly the configured administrator, so DCR
+widens who may ask, never who is let in.
 
 `@cloudflare/workers-oauth-provider` 0.8.3 supports this directly via
 `clientIdMetadataDocumentEnabled`, which requires the
@@ -168,10 +187,10 @@ UNMEASURED here, and is not claimed either way.
 | Gate | Proves | State |
 |---|---|---|
 | `npm run typecheck` | `wrangler types && tsc -b` | green |
-| `npm run build` | a dry-run bundle. 1,149.76 KiB raw, 206.42 KiB gzip, measured 2026-09-07 on wrangler 4.129.0 | green |
-| `npm run check:wrapper` | the no-policy law, mechanically. 227 assertions | green, 13/13 planted violations caught |
-| `npm run check:wrapper:plant` | that `check:wrapper` actually fails | 13 caught, 0 missed |
-| `npm run check:conformance` | the official suite against the real protocol layer, per era | **baseline, not a clean sweep** |
+| `npm run build` | a dry-run bundle. 1,154.46 KiB raw, 208.00 KiB gzip, measured 2026-09-07 on wrangler 4.129.0 | green |
+| `npm run check:wrapper` | the no-policy law, mechanically. 230 assertions | green, 15/15 planted violations caught |
+| `npm run check:wrapper:plant` | that `check:wrapper` actually fails | 15 caught, 0 missed |
+| `npm run check:conformance` | the official suite against the real protocol layer, per era, plus the authorization server against the real deploy entry | **baseline, not a clean sweep** |
 
 `npm run build` exists because **typecheck is not a build.** Two commits shipped
 with the runtime dependencies missing from `package.json` and typecheck passed
@@ -199,6 +218,16 @@ local stub. So what is certified is the code that ships, not a stand-in.
 |---|---|---|
 | 2026-07-28 | `server-stateless` (SEP-2575) | 24/28 baseline |
 | 2025-11-25 | `server-initialize` | 1/1 |
+| 2026-07-28 | `authorization-server-metadata-endpoint` | 2/2 |
+
+The authorization scenario runs against a second `wrangler dev` mounting the
+**real deploy entry** (`src/index.ts`, OAuth provider included, its own
+`--persist-to` because two dev processes sharing state deadlock the Durable
+Object's SQLite). The official scenario treats registration as optional, so the
+harness adds three checks of its own, planted red before being trusted: the
+metadata advertises CIMD (claude.ai's path) and `registration_endpoint` (Grok's
+path), and a `POST /register` against the local dev actually mints a
+`client_id`.
 
 The 4 shortfalls are **upstream**: `@modelcontextprotocol/server` 2.0.0 does not
 implement `MissingRequiredClientCapabilityError` (-32021). Attributed upstream

@@ -467,6 +467,32 @@ if (legacyText) {
 }
 
 // ---------------------------------------------------------------------------
+// H. The client leg serves BOTH measured identity paths.
+// ---------------------------------------------------------------------------
+
+// Each of these is a measured requirement of a real client, not a preference.
+// Removing either would lock out a client that was watched needing it, so both
+// are asserted to STAY. The dates are the captures to argue with.
+const indexText = files.find((f) => f.name === "index.ts")?.text ?? "";
+
+// The option and its boolean are executable code, so codeOnly() applies; this
+// file's own comments discuss the option by name and must not satisfy it.
+check(
+  "CIMD stays enabled (claude.ai, measured 2026-07-30, never calls /register)",
+  /clientIdMetadataDocumentEnabled:\s*true/.test(codeOnly(indexText)),
+  "claude.ai identifies itself by a client metadata URL. Without CIMD it cannot connect.",
+);
+
+// "/register" is a STRING option value, so withoutComments() keeps it while
+// still refusing to let the comment block above the option satisfy the check.
+check(
+  'DCR stays configured at "/register" (Grok Build 1.0.13 rmcp, measured 2026-09-07)',
+  /clientRegistrationEndpoint:\s*"\/register"/.test(withoutComments(indexText)),
+  "Grok's rmcp client cannot do CIMD; without RFC 7591 registration it cannot " +
+    "mint a client identity and stops before opening a browser.",
+);
+
+// ---------------------------------------------------------------------------
 
 console.log(`\ncheck:wrapper: ${assertions - failures}/${assertions} assertions passed`);
 if (failures) {

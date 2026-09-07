@@ -24,7 +24,7 @@ cd "$(dirname "$0")/.." || exit 2
 SNAP="$(mktemp -d)"
 trap 'rm -rf "$SNAP"' EXIT
 
-FILES="src/tools.ts src/api-client.ts src/legacy-era.ts src/mcp-handler.ts wrangler.jsonc wrangler.jsonc.example"
+FILES="src/tools.ts src/api-client.ts src/legacy-era.ts src/mcp-handler.ts src/index.ts wrangler.jsonc wrangler.jsonc.example"
 
 snapshot() {
   for f in $FILES; do
@@ -170,8 +170,25 @@ s=s.replace('\"main\": \"src/index.ts\"','\"main\": \"test/conformance-entry.ts\
 open(p,'w',encoding='utf-8',newline='').write(s)"
 expect_fail "13. main points at the conformance test entry"
 
+# 14. The DCR registration endpoint removed. Grok's rmcp client (measured
+#     2026-09-07) cannot mint a client identity without it and never opens a
+#     browser, which is exactly the outage this plant simulates.
+python3 -c "
+p='src/index.ts'; s=open(p,encoding='utf-8').read()
+s=s.replace('  clientRegistrationEndpoint: \"/register\",\n','',1)
+open(p,'w',encoding='utf-8',newline='').write(s)"
+expect_fail "14. clientRegistrationEndpoint removed from the OAuthProvider"
+
+# 15. CIMD disabled. claude.ai's measured identity path (2026-07-30); turning it
+#     off locks out the client the wrapper was originally verified against.
+python3 -c "
+p='src/index.ts'; s=open(p,encoding='utf-8').read()
+s=s.replace('clientIdMetadataDocumentEnabled: true,','clientIdMetadataDocumentEnabled: false,',1)
+open(p,'w',encoding='utf-8',newline='').write(s)"
+expect_fail "15. clientIdMetadataDocumentEnabled switched off"
+
 echo
-echo "planted 13: $pass caught, $missed missed, $contaminated contaminated"
+echo "planted 15: $pass caught, $missed missed, $contaminated contaminated"
 final=$(gate)
 echo "final baseline: exit $final"
 if [ "$missed" != "0" ] || [ "$contaminated" != "0" ] || [ "$final" != "0" ]; then

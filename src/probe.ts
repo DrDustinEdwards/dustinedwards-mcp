@@ -21,6 +21,15 @@
  *                                      Mcp-Method or Mcp-Name, opens a GET stream
  *   claude.ai (Anthropic) 2026-07-30   LEGACY: initialize, 2025-11-25, no
  *                                      Mcp-Method or Mcp-Name, no _meta version
+ *   Grok Build 1.0.13     2026-09-07   LEGACY, and blocked before initialize:
+ *                                      opens GET /mcp declaring
+ *                                      mcp-protocol-version: 2024-11-05, then its
+ *                                      rmcp auth middleware found the origin's AS
+ *                                      metadata (path-scoped PRM first), saw no
+ *                                      registration_endpoint, and quit; it does
+ *                                      RFC 7591 DCR, not CIMD. No POST was ever
+ *                                      sent. Discovery walk read from the Worker
+ *                                      logs, since it hit the real AS routes.
  *
  * Read captures with `node scripts/probe-report.mjs`, which goes through the
  * Cloudflare API. There is no HTTP control plane on purpose: a log describing a

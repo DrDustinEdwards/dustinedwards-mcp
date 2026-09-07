@@ -19,7 +19,8 @@
  *                          then apiHandler re-checks the admin grant, rate
  *                          limits, and hands off to the era router
  *   /authorize /callback   the consent flow, github-handler.ts
- *   /token /.well-known/*  served by the OAuth library
+ *   /token /register       served by the OAuth library
+ *   /.well-known/*         ditto
  *   /probe/*               the client measurement instrument, probe.ts
  *   /health                liveness
  */
@@ -100,11 +101,25 @@ const provider = new OAuthProvider({
   defaultHandler: defaultHandler as unknown as ExportedHandler,
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/token",
-  // NO clientRegistrationEndpoint. Measured 2026-07-30: claude.ai sends its
-  // client_id as the URL https://claude.ai/oauth/mcp-oauth-client-metadata and
-  // never calls a registration endpoint, and MCP 2026-07-28 deprecates RFC 7591
-  // in favour of CIMD. Building one would serve no measured client.
+  // BOTH client identity paths, each on its own measurement:
+  //
+  // CIMD. Measured 2026-07-30: claude.ai sends its client_id as the URL
+  // https://claude.ai/oauth/mcp-oauth-client-metadata and never calls a
+  // registration endpoint. MCP 2026-07-28 deprecates RFC 7591 in favour of CIMD,
+  // so this stays the design-center path.
+  //
+  // DCR. Measured 2026-09-07: Grok Build 1.0.13's rmcp client cannot do CIMD and
+  // requires RFC 7591 dynamic registration. With no registration_endpoint in the
+  // AS metadata it stopped at "OAuth authorization required" without ever
+  // building an authorization URL, so no browser opened. The earlier note here
+  // ("building one would serve no measured client") was true on 2026-07-30 and
+  // is superseded by that capture.
+  //
+  // Registration only mints a client identity. A registered client still gets a
+  // grant solely through the GitHub consent flow, and isAdminUser admits exactly
+  // the configured administrator, so DCR widens who may ASK, never who is let in.
   clientIdMetadataDocumentEnabled: true,
+  clientRegistrationEndpoint: "/register",
 });
 
 export default {

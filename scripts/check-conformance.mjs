@@ -12,6 +12,15 @@
  * src/legacy-era.ts, so the compatibility path is proven rather than assumed, and
  * the day the shim is deleted this gate will say exactly what stopped working.
  *
+ * PLUS THE AUTHORIZATION SERVER, since 2026-09-07. A second dev process mounts
+ * the REAL deploy entry (src/index.ts, the OAuth provider included) and the
+ * suite's authorization-server-metadata-endpoint scenario runs against it. On
+ * top of the official scenario, the harness asserts the metadata advertises
+ * BOTH measured client identity paths (CIMD for claude.ai, 2026-07-30; RFC 7591
+ * registration for Grok's rmcp client, 2026-09-07) and proves POST /register
+ * actually mints a client, because an advertised endpoint that 404s is exactly
+ * the outage that was being debugged when this section was added.
+ *
  * SCOPE. The wrapper implements tools and nothing else. Resources, prompts,
  * completion, logging, tasks, sampling and elicitation are deliberate exclusions
  * recorded in the README, so their scenarios are not run: a gate that reported 17
@@ -34,6 +43,10 @@ const ENTRY = fileURLToPath(new URL("../test/conformance-entry.ts", import.meta.
 
 const DEV_PORT = 8789;
 const STUB_PORT = 8790;
+// The REAL entry (src/index.ts, wrangler.jsonc main), OAuth provider included,
+// for the authorization-server checks. Separate port, separate process: the
+// tools entry deliberately strips the client leg, so it cannot certify auth.
+const AUTH_PORT = 8791;
 // Long enough to pass the API leg's own configuration floor, which mirrors the
 // app's refusal of any operator token under 32 characters.
 const STUB_TOKEN = "conformance-stub-token-000000000000";
@@ -148,6 +161,20 @@ function summarize(out) {
   return null;
 }
 
+async function waitForAuthDev(timeoutMs = 90_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`http://localhost:${AUTH_PORT}/.well-known/oauth-authorization-server`);
+      if (res.ok) return true;
+    } catch {
+      /* not up yet */
+    }
+    await sleep(1000);
+  }
+  return false;
+}
+
 const stub = await startStub();
 log(`stub operator API on :${STUB_PORT}`);
 
@@ -167,13 +194,36 @@ const dev = spawn(
   { stdio: ["ignore", "pipe", "pipe"] },
 );
 
+// No positional entry, so this one runs wrangler.jsonc's `main`: the deploy
+// target itself. No secrets are set, which only gates /authorize (503, not
+// configured means not open); the metadata and registration routes this section
+// certifies are served by the library regardless.
+//
+// Its own --persist-to, because two dev processes sharing .wrangler/state both
+// open the Durable Object's SQLite file and workerd dies at SQLITE_BUSY.
+// Measured here 2026-09-07 on the first run of this section.
+const authDev = spawn(
+  process.execPath,
+  [WRANGLER, "dev", "--port", String(AUTH_PORT), "--persist-to", ".wrangler/state-conformance-auth"],
+  { stdio: ["ignore", "pipe", "pipe"] },
+);
+
 let devLog = "";
 dev.stdout.on("data", (d) => (devLog += d));
 dev.stderr.on("data", (d) => (devLog += d));
 
+let authDevLog = "";
+authDev.stdout.on("data", (d) => (authDevLog += d));
+authDev.stderr.on("data", (d) => (authDevLog += d));
+
 function shutdown() {
   try {
     dev.kill();
+  } catch {
+    /* already gone */
+  }
+  try {
+    authDev.kill();
   } catch {
     /* already gone */
   }
@@ -243,6 +293,86 @@ for (const [specVersion, scenario, wantPass, wantTotal, note] of SCENARIOS) {
   log(`  BASELINE   ${label}  ${counts.passed}/${counts.total}${note ? `  (${note})` : ""}`);
 }
 
+// ---- The authorization server, against the real deploy entry ---------------
+
+if (!(await waitForAuthDev())) {
+  failures += 1;
+  log("  FAIL       authorization: wrangler dev on the real entry did not come up. Output follows:");
+  log(authDevLog.slice(-3000));
+} else {
+  const authLabel = "2026-07-28  authorization-server-metadata-endpoint";
+  const auth = (() => {
+    try {
+      const out = execFileSync(
+        process.execPath,
+        [
+          CONFORMANCE,
+          "authorization",
+          "--url",
+          `http://localhost:${AUTH_PORT}`,
+          "--scenario",
+          "authorization-server-metadata-endpoint",
+          "--spec-version",
+          "2026-07-28",
+        ],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000 },
+      );
+      return { ok: true, out };
+    } catch (err) {
+      return { ok: false, out: `${err.stdout ?? ""}${err.stderr ?? ""}` };
+    }
+  })();
+  const authCounts = summarize(auth.out);
+  if (!authCounts) {
+    failures += 1;
+    log(`  NO RESULT  ${authLabel}  (could not parse a count from the suite output)`);
+  } else if (authCounts.passed === authCounts.total) {
+    log(`  PASS       ${authLabel}  (${authCounts.passed}/${authCounts.total})${auth.ok ? "" : "  [suite exited non-zero: Windows teardown crash]"}`);
+  } else {
+    failures += 1;
+    log(`  FAIL       ${authLabel}  (${authCounts.passed}/${authCounts.total})`);
+  }
+
+  // The official scenario treats registration as optional, so it cannot notice
+  // the outage measured 2026-09-07: metadata with no registration_endpoint left
+  // Grok's rmcp client unable to mint an identity or open a browser. These
+  // harness checks pin BOTH measured client identity paths, in both directions.
+  const meta = await (await fetch(`http://localhost:${AUTH_PORT}/.well-known/oauth-authorization-server`)).json();
+  if (meta.client_id_metadata_document_supported === true) {
+    log("  PASS       metadata advertises CIMD (claude.ai's path, measured 2026-07-30)");
+  } else {
+    failures += 1;
+    log("  FAIL       metadata no longer advertises client_id_metadata_document_supported");
+  }
+  if (typeof meta.registration_endpoint === "string" && meta.registration_endpoint.endsWith("/register")) {
+    log("  PASS       metadata advertises registration_endpoint (Grok's path, measured 2026-09-07)");
+  } else {
+    failures += 1;
+    log("  FAIL       metadata no longer advertises registration_endpoint at /register");
+  }
+
+  // An advertised endpoint that does not answer is the same outage with a
+  // second cause, so prove RFC 7591 registration actually mints a client.
+  const reg = await fetch(`http://localhost:${AUTH_PORT}/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "check-conformance registration proof",
+      redirect_uris: ["http://127.0.0.1:3000/callback"],
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+    }),
+  });
+  const regBody = await reg.json().catch(() => ({}));
+  if (reg.ok && typeof regBody.client_id === "string" && regBody.client_id.length > 0) {
+    log("  PASS       POST /register mints a client_id (RFC 7591 answers, local dev only)");
+  } else {
+    failures += 1;
+    log(`  FAIL       POST /register did not mint a client (status ${reg.status})`);
+  }
+}
+
 log("");
 shutdown();
 
@@ -251,7 +381,8 @@ if (failures) {
   process.exit(1);
 }
 log(
-  "check:conformance: no regression against the recorded baseline, in both eras. " +
+  "check:conformance: no regression against the recorded baseline, in both eras, " +
+    "and the authorization server serves both measured client identity paths. " +
     "Note this is a BASELINE, not a clean sweep: server-stateless sits at 24/28 on a named " +
     "upstream SDK gap, and several applicable scenarios are not yet wired in. See SCENARIOS.",
 );

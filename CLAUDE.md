@@ -64,7 +64,13 @@ Measured 2026-07-29: Claude Code 2.1.203 is LEGACY (opens `initialize` at
 Measured 2026-07-30: claude.ai (`clientInfo.name` = `Anthropic`) is ALSO LEGACY,
 same `2025-11-25`, no `Mcp-Method`/`Mcp-Name`, no `_meta` protocolVersion.
 
-Two independent clients, different infrastructure, both legacy. The shim is
+Measured 2026-09-07: Grok Build 1.0.13 (rmcp) is LEGACY and never got that far:
+it opens `GET /mcp` declaring `mcp-protocol-version: 2024-11-05`, and its auth
+middleware quit before any POST because the AS metadata carried no
+`registration_endpoint`. Its discovery walk lives in the Worker logs, not the
+probe, because the probe stopped serving OAuth discovery routes on 2026-07-30.
+
+Three independent clients, different infrastructure, all legacy. The shim is
 load-bearing right now.
 
 ## Client leg is settled, and the two traps in it
@@ -74,12 +80,19 @@ the whole flow: RFC 9728, RFC 8414, RFC 8707 audience binding, PKCE S256. No
 bearer fallback and no dated debt; the standard only permits those where the
 measured client CANNOT complete the flow.
 
-- **CIMD, not DCR.** claude.ai sends `client_id` as the URL
-  `https://claude.ai/oauth/mcp-oauth-client-metadata` and never calls `/register`.
-  Do not build a dynamic client registration endpoint; `2026-07-28` deprecates
-  RFC 7591 in favour of CIMD anyway. `@cloudflare/workers-oauth-provider` 0.8.3
-  wants `clientIdMetadataDocumentEnabled: true` plus the
-  `global_fetch_strictly_public` compatibility flag.
+- **CIMD AND DCR, both, each on a measurement.** claude.ai (2026-07-30) sends
+  `client_id` as the URL `https://claude.ai/oauth/mcp-oauth-client-metadata` and
+  never calls `/register`, so `clientIdMetadataDocumentEnabled: true` plus the
+  `global_fetch_strictly_public` compatibility flag stay. Grok Build 1.0.13
+  (2026-09-07, rmcp) CANNOT do CIMD and requires RFC 7591 dynamic registration;
+  without a `registration_endpoint` it stops at "OAuth authorization required"
+  and never opens a browser, so `clientRegistrationEndpoint: "/register"` exists
+  for it. The earlier ruling here ("do not build a registration endpoint") was
+  measurement-true on 2026-07-30 and is superseded by the Grok capture.
+  Registration mints an identity only: a grant still goes through the GitHub
+  consent flow and `isAdminUser`, so DCR widens who may ask, never who is let in.
+  Both paths are pinned by `check:wrapper` and by the conformance gate's
+  authorization section, in both directions.
 - **PRM must answer the PATH-SCOPED route.** claude.ai requests
   `/.well-known/oauth-protected-resource/mcp` BEFORE the bare
   `/.well-known/oauth-protected-resource`. A server handling only the bare form
@@ -98,9 +111,10 @@ than as a transport error.
 - `npm run deploy` (wrangler deploy)
 - `npm run typecheck` (`wrangler types && tsc -b`)
 - `npm run build` (`wrangler deploy --dry-run`). NOT the same check as typecheck.
-- `npm run check:wrapper` gate over the no-policy law, 223 assertions
-- `npm run check:wrapper:plant` proves that gate actually fails, 11 violations
-- `npm run check:conformance` official MCP suite, per era. A BASELINE, not a sweep.
+- `npm run check:wrapper` gate over the no-policy law, 230 assertions
+- `npm run check:wrapper:plant` proves that gate actually fails, 15 violations
+- `npm run check:conformance` official MCP suite, per era, plus the
+  authorization server against the real deploy entry. A BASELINE, not a sweep.
 - `node scripts/probe-report.mjs` read the client measurement
 - `node scripts/probe-report.mjs --reset` clear captures before a real measurement
 
