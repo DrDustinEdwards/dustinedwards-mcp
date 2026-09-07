@@ -171,10 +171,23 @@ client identity; a grant is still issued solely through the GitHub consent flow,
 and `isAdminUser` still admits exactly the configured administrator, so DCR
 widens who may ask, never who is let in.
 
-`@cloudflare/workers-oauth-provider` 0.8.3 supports this directly via
+`@cloudflare/workers-oauth-provider` supports this directly via
 `clientIdMetadataDocumentEnabled`, which requires the
 `global_fetch_strictly_public` compatibility flag. That is the same library the
 capsid MCP uses, so the precedent covers the measured flow.
+
+**Pinned to 0.10.3 exactly, on a differential taken 2026-09-07.** Adding
+`/register` did not move Grok Build 1.0.13: with the registration endpoint
+advertised and answering `201` to a localhost callback, the client still sent one
+unauthenticated `POST /mcp`, took the `401`, and never followed the
+`WWW-Authenticate` pointer to discovery. Nothing else reached the Worker, and
+pressing the connector's authenticate key emitted no request at all. The capsid
+MCP authenticates from that same Grok build on the same machine and was running
+0.10.3 while this Worker ran 0.8.3, which is the difference this pin closes. The
+other differences that fell out of that comparison, and which remain untested as
+causes, are that capsid does not enable CIMD, offers `S256` alone rather than
+`plain` beside it, and advertises
+`authorization_response_iss_parameter_supported`.
 
 **Caveat on the instrument.** The probe serves PRM unconditionally, so its `open`
 phase was never truly authless, which is why claude.ai authenticated despite a
