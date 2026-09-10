@@ -247,6 +247,81 @@ phase was never truly authless, which is why claude.ai authenticated despite a
 also means whether claude.ai would accept a genuinely authless server is
 UNMEASURED here, and is not claimed either way.
 
+## Agent keys: the door for clients that cannot complete OAuth
+
+Ruling 37, 2026-09-07. Grok Build 1.0.13 POSTs `/mcp`, receives a well-formed
+401 naming a path-scoped PRM that answers 200, and then walks nothing: no
+discovery, no `/register`, no `/authorize`. Measured across four conditions. The
+defect is the client's and a bug report went upstream, but an agent that cannot
+complete OAuth cannot reach this server at all, and waiting on somebody else's
+release is not a plan.
+
+**One secret per agent, and the secret's NAME is the principal.**
+`AGENT_KEY_GROK` is the key for the principal `grok`. That is what makes the
+principal unspoofable: it is never carried in the request, it is a property of
+which configured secret the presented key matched, so a caller can prove it
+holds a key and can never choose what it is called.
+
+**It buys operator rights and nothing else.** Every tool call still leaves as
+one authenticated request to the operator API carrying `OPERATOR_TOKEN`, which
+the API grants `{ kind: "operator" }`. First publication is refused there, by
+`firstPublish: false` on that actor kind, so **an agent still cannot publish a
+post for the first time**. An agent key changes who may ask, never what the
+answer is. This wrapper still contains no policy.
+
+**It is inert until a secret exists.** With no `AGENT_KEY_*` set, every request
+falls through to the OAuth provider and this Worker behaves exactly as it did
+before. That is the state it deploys in.
+
+### Adding an agent
+
+Generate the key with a real CSPRNG, never by hand, and never paste it into a
+chat. Then:
+
+```powershell
+# The name after AGENT_KEY_ becomes the principal, lower-cased, in the audit log.
+npx wrangler secret put AGENT_KEY_GROK
+```
+
+The agent sends it as an ordinary bearer token against `/mcp`. For Grok Build,
+in `~/.grok/config.toml`:
+
+```toml
+[[mcp_servers]]
+name = "dustinedwards"
+type = "http"
+url = "https://dustinedwards-mcp.dustin-edwards.workers.dev/mcp"
+
+[mcp_servers.headers]
+Authorization = "Bearer PASTE_THE_KEY_HERE"
+```
+
+### Rotating and revoking
+
+Rotation is `wrangler secret put` again with the same name. Revocation is
+`npx wrangler secret delete AGENT_KEY_GROK`, and it takes effect on the next
+request: the key then matches nothing, and the caller falls through to the OAuth
+provider, which refuses it.
+
+### What the log says, and what it does not
+
+Every accepted agent request writes one line:
+
+```json
+{"audit":"agent-key-accepted","principal":"grok","method":"POST","rights":"operator"}
+```
+
+No key, no key length and no Authorization header ever reaches a log line, and
+`check:wrapper` asserts that in both directions.
+
+**The limit worth knowing.** The operator API downstream sees `OPERATOR_TOKEN`
+and records `tokenLabel(token)`, which is the same eight hex characters for
+every agent and for the human operator. So this Worker's log is the only place
+that says WHICH agent acted; the site's own audit still says only that the
+operator did. Distinguishing them there would mean the API accepting a
+caller-supplied principal, which is a change to an auth surface and a decision
+for the seat rather than a detail of this feature.
+
 ## Gates
 
 | Gate | Proves | State |

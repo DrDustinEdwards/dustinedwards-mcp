@@ -492,6 +492,139 @@ check(
     "mint a client identity and stops before opening a browser.",
 );
 
+// --- the agent key path, ruling 37 -----------------------------------------
+
+/*
+ * A SECOND DOOR IS THE MOST DANGEROUS THING IN THIS REPO, so it is asserted
+ * harder than the first. The law does not forbid it: an agent key is client-leg
+ * IDENTITY, the same category as an OAuth grant, and it changes who may ASK
+ * rather than what the answer is. What the law does forbid is a second door
+ * that reaches the publish machinery by a different route, or that carries any
+ * right the first one does not.
+ */
+/*
+ * TWO VIEWS OF THE SAME SOURCE, and the choice per assertion is deliberate.
+ *
+ * `codeOnly` blanks every string and template literal, which is right for
+ * STRUCTURE (is the admin check called, is there a second handleMcp) and wrong
+ * for anything whose subject IS a string: the audit key, the rate-limit
+ * identity, `rights: "operator"`. Those need `withoutComments`, which keeps
+ * string values and still refuses to let this file's own prose satisfy a check.
+ * That is the same split the `/register` assertion above makes, for the same
+ * reason, and getting it backwards cost five failing assertions on the first
+ * run of this block.
+ */
+const authText = files.find((f) => f.name === "auth.ts")?.text ?? "";
+const authCode = codeOnly(authText);
+const indexCode = codeOnly(indexText);
+const authStrings = withoutComments(authText);
+const indexStrings = withoutComments(indexText);
+
+check(
+  "the agent key path is scoped to the MCP route",
+  /url\.pathname === MCP_ROUTE/.test(indexCode),
+  "An agent key is an alternative to HOLDING a grant, not to the protocol " +
+    "around one. Widened past /mcp it would sit in front of the consent flow " +
+    "and the token endpoint, which are the provider's.",
+);
+
+check(
+  "the agent path reaches the tool surface through the SAME handleMcp",
+  (indexCode.match(/handleMcp\(request, env, ctx\)/g) ?? []).length === 2,
+  "Two handlers would be two places the tool surface is defined, and the first " +
+    "time they disagreed one door would offer something the other did not. " +
+    "Expected exactly two call sites: the OAuth one and the agent one.",
+);
+
+check(
+  "the agent path is rate limited under its own identity",
+  /checkRateLimit\(env, `agent:\$\{principal\}`\)/.test(indexStrings),
+  "Sharing the operator's bucket would let one agent rate limit Dustin out of " +
+    "his own server. Both doors have locks, and they are different locks.",
+);
+
+check(
+  "the principal comes from the matched SECRET NAME, never from the request",
+  /*
+   * THE CHAIN, not the absence of a word. The first version asserted that
+   * "principal" appeared nowhere before the `agentPrincipal(` call, which is
+   * false for an innocent reason: `agentHandler` declares a `principal`
+   * parameter above the call site, so the assertion failed on correct code.
+   *
+   * What matters is where the value COMES FROM. `agentPrincipal` derives it
+   * from the matched secret's NAME, and index.ts passes that return value
+   * straight through to the handler. Nothing reads it off the request.
+   */
+  /name\.slice\(AGENT_KEY_PREFIX\.length\)/.test(authCode) &&
+    /const principal = await agentPrincipal\(/.test(indexCode) &&
+    /agentHandler\(request, env, ctx, principal\)/.test(indexCode),
+  "If a caller could name itself, the audit line would record whatever it " +
+    "typed. The principal must be a property of WHICH configured secret the " +
+    "presented key matched.",
+);
+
+check(
+  "an empty or blank agent secret cannot match",
+  /typeof value !== "string" \|\| !value\.trim\(\)/.test(authStrings),
+  "A secret accidentally set to the empty string would otherwise become a key " +
+    "that any bearer satisfies. Fail closed.",
+);
+
+check(
+  "the agent comparison goes through secretsMatch, never a string compare",
+  /await secretsMatch\(presented, value\)/.test(authCode),
+  "A raw compare leaks the secret's length through the loop bound. " +
+    "secretsMatch hashes both sides to a fixed 32 bytes first.",
+);
+
+/*
+ * THE AUDIT LINE, AND WHAT IT MUST NOT CARRY. The principal is the point of the
+ * line; the negative half matters more, because a log carrying the key would
+ * move a secret into a sink nobody treats as one.
+ */
+check(
+  "the audit line records the principal",
+  /audit: "agent-key-accepted"/.test(indexStrings) && /principal,/.test(indexStrings),
+  "Ruling 37: the call is logged as its own principal. Without it the second " +
+    "door is indistinguishable from the first in the logs.",
+);
+
+check(
+  "the audit line carries no key material",
+  !/authorization/i.test(
+    indexStrings.slice(
+      indexStrings.indexOf('audit: "agent-key-accepted"'),
+      indexStrings.indexOf("checkRateLimit(env, `agent:"),
+    ),
+  ),
+  "The Authorization header, the key, or any slice or length of it must never " +
+    "reach a log line.",
+);
+
+/*
+ * THE REFUSAL THE RULING NAMES, asserted where this Worker can carry it: it
+ * does not implement first-publish policy and must not start.
+ *
+ * "First publish stays Dustin's" is enforced by the operator API, which grants
+ * OPERATOR_TOKEN `{ kind: "operator" }` and refuses first publication on that
+ * actor kind. The wrapper's job is to have no opinion, so what is asserted here
+ * is that the agent door introduces no second credential and no claim to admin.
+ */
+check(
+  "the agent path mints no credential of its own",
+  !/OPERATOR_TOKEN/.test(indexCode),
+  "index.ts must never touch the API credential. If the agent door chose a " +
+    "token, the API's actor kind would become this Worker's decision and " +
+    "first-publish policy would move here with it.",
+);
+
+check(
+  "no admin right is named on the agent path, and operator is",
+  !/isAdminUser\([^)]*principal/.test(indexCode) && /rights: "operator"/.test(indexStrings),
+  "Ruling 37: operator rights only, never admin. The agent path must not " +
+    "consult the admin check at all, because passing it would be the bug.",
+);
+
 // ---------------------------------------------------------------------------
 
 console.log(`\ncheck:wrapper: ${assertions - failures}/${assertions} assertions passed`);

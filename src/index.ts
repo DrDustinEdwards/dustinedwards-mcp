@@ -27,7 +27,7 @@
 
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 
-import { isAdminUser, type Props } from "./auth";
+import { agentPrincipal, isAdminUser, type Props } from "./auth";
 import { defaultHandler, type GitHubEnv } from "./github-handler";
 import { handleMcp, MCP_ROUTE } from "./mcp-handler";
 import { handleProbe, type ProbeEnv } from "./probe";
@@ -95,6 +95,70 @@ const apiHandler = {
   },
 };
 
+/**
+ * The agent-key surface: the same rate limit and the same handler, a different
+ * door. Ruling 37.
+ *
+ * IT SHARES `handleMcp` WITH THE OAUTH PATH ON PURPOSE. Two handlers would be
+ * two places for the tool surface to be defined, and the first time they
+ * disagreed one door would offer something the other did not. There is one
+ * MCP server here and two ways to be let in front of it.
+ *
+ * THE AUDIT LINE IS THE PRINCIPAL, and it is the only place the agent's name
+ * appears. Worth stating plainly, because it is a real limit rather than an
+ * oversight: the operator API downstream sees `OPERATOR_TOKEN` and records
+ * `tokenLabel(token)`, which is the same eight hex characters for every agent
+ * and for the human operator. So this log is where "grok did that" is written
+ * down, and the site's own audit still says only "the operator did".
+ * Distinguishing them THERE would mean the API accepting a caller-supplied
+ * principal, which is a change to an auth surface and a decision for the seat.
+ *
+ * The line carries no key, no key length and no header, only the principal that
+ * a comparison against a configured secret produced.
+ */
+async function agentHandler(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  principal: string,
+): Promise<Response> {
+  console.log(
+    JSON.stringify({
+      audit: "agent-key-accepted",
+      principal,
+      // Present so a reader can tell a tools/call from a handshake without the
+      // body. Never the Authorization header, and never any part of the key.
+      method: request.method,
+      rights: "operator",
+    }),
+  );
+
+  /*
+   * KEYED BY THE PRINCIPAL, not by IP and not shared with the operator. The
+   * OAuth path limits `operator:<github id>`; an agent gets its own bucket, so
+   * one agent exhausting its allowance cannot rate limit Dustin out of his own
+   * server, and vice versa. Fails closed when the binding is missing, exactly
+   * as the other door does.
+   */
+  const limit = await checkRateLimit(env, `agent:${principal}`);
+  if (!limit.allowed) {
+    return new Response(
+      "Rate limited. This wrapper allows 30 requests per 60 seconds. The operator API applies its own " +
+        "limit independently of this one.",
+      {
+        status: 429,
+        headers: {
+          "content-type": "text/plain; charset=utf-8",
+          "cache-control": "no-store",
+          "retry-after": String(limit.retryAfter),
+        },
+      },
+    );
+  }
+
+  return handleMcp(request, env, ctx);
+}
+
 const provider = new OAuthProvider({
   apiRoute: MCP_ROUTE,
   apiHandler,
@@ -132,6 +196,32 @@ export default {
     // to the operator API.
     if (url.pathname.startsWith("/probe")) {
       return handleProbe(request, env, url.origin);
+    }
+
+    /*
+     * THE AGENT KEY PATH. Ruling 37.
+     *
+     * BEFORE the provider, because the provider owns `/mcp` and answers 401 to
+     * anything carrying a token it did not mint. An agent key is not one of
+     * those, so it is recognised here or not at all.
+     *
+     * IT IS TRIED, NEVER REQUIRED. `agentPrincipal` returns null for a missing
+     * header, a malformed one, a key matching nothing, and for a Worker with no
+     * `AGENT_KEY_*` secret configured at all. Every one of those falls through
+     * to the provider, which answers exactly as it did before. So this Worker's
+     * behaviour with no agent secret set is unchanged, and that is the state it
+     * deploys in.
+     *
+     * SCOPED TO `/mcp`. The consent flow, the token endpoint, `/register` and
+     * the metadata documents stay the provider's business: an agent key is an
+     * alternative to HOLDING a grant, not to the protocol around one.
+     */
+    if (url.pathname === MCP_ROUTE) {
+      const principal = await agentPrincipal(
+        env as unknown as Record<string, unknown>,
+        request.headers.get("authorization"),
+      );
+      if (principal) return agentHandler(request, env, ctx, principal);
     }
 
     return provider.fetch(request, env, ctx);
