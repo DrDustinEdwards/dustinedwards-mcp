@@ -1,0 +1,111 @@
+# CI for the admin MCP wrapper.
+#
+# ## Why this exists
+#
+# This repo had NO CI at all until 2026-09-10. Renovate has been opening
+# dependency PRs against it since 2026-09-07, and every one of them arrived
+# carrying no evidence: a green tick from nothing, on a Worker that holds the
+# operator credential and is the only machine-facing write path into the site.
+# Ruling 36 makes the point sharper than the gap does: a repo with no CI never
+# automerges, so without this workflow every bump here is a manual read forever.
+#
+# ## What runs, and what deliberately does not
+#
+#   typecheck        wrangler types plus tsc -b. Catches the Worker types going
+#                    out of step with the config, which is the failure a
+#                    dependency bump actually produces here.
+#   check:wrapper    the no-policy law, read off the real source and the real
+#                    config. It is pure: no network, no deploy, no Cloudflare
+#                    API, and it already falls back to wrangler.jsonc.example
+#                    when the gitignored real config is absent, so it needs
+#                    nothing from the bootstrap step below.
+#   build            wrangler deploy --dry-run --outdir=dist. It bundles and
+#                    prints and creates no version and no deployment, so it is
+#                    safe on a runner with no credentials. It is the only step
+#                    that proves the Worker still BUILDS, which a typecheck does
+#                    not.
+#
+# check:conformance is NOT here, and that is a decision rather than an omission.
+# It spawns two `wrangler dev` processes and drives the official MCP conformance
+# suite against them over HTTP on two ports. A full sweep already exceeds nine
+# minutes locally, the suite is a heavy dev dependency, and a runner would be
+# proving the same thing about a different machine's networking. It stays a
+# local gate until it can run on a runner, which is the queued line this
+# workflow closes the rest of. When that changes, it joins this file rather
+# than acquiring a second one.
+#
+# ## Everything is pinned by COMMIT SHA
+#
+# A tag is a moving pointer the upstream owner can repoint at any commit, so a
+# tag ref means "whatever that account publishes next" running with this
+# repository's token. The two shas below are the commits the actions/checkout
+# v7.0.1 and actions/setup-node v7.0.0 tags named, taken from the site repo's
+# own workflow, which verified them against the tag list on 2026-08-25.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to main should not race the first. `cancel-in-progress` is
+# deliberately false, on the site repo's grounds: the runs are the review, and
+# cancelling one loses the only record that a commit was ever checked.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: Gates, clean checkout
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # The version is READ FROM .nvmrc rather than written here. A second
+      # statement of the Node version is a mirror, and the portfolio has been
+      # bitten by mirrors more than once.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # `npm ci` and not `npm install`: it installs from the lockfile exactly
+      # and fails when package.json and the lockfile disagree, which is the
+      # property that makes this a review rather than a re-resolution.
+      - run: npm ci
+
+      # THE CONFIG IS BOOTSTRAPPED FROM THE EXAMPLE, and without this step two
+      # of the three gates below cannot run at all.
+      #
+      # MEASURED 2026-09-10 rather than assumed: with wrangler.jsonc moved
+      # aside, `npm run typecheck` exits 127, because `wrangler types` reads
+      # that file and it is gitignored (it carries live KV namespace ids).
+      # `npm run build` reads it too.
+      #
+      # A step here rather than a postinstall script, deliberately. The site
+      # repo solves the same problem with scripts/bootstrap-config.mjs on
+      # postinstall, and that is the better answer for a repo where humans also
+      # clone fresh and run gates. Here the runner is the only consumer that
+      # hits the gap, so the fix is visible at the point of use instead of
+      # changing what every local `npm install` does. If a fresh local clone
+      # ever needs the same thing, move this to a postinstall and delete the
+      # step rather than keeping both.
+      #
+      # `cp -n` never overwrites, so this is a no-op if a real config is ever
+      # present. The example carries placeholder ids, which is all a dry-run
+      # build and a types generation need.
+      - name: Bootstrap wrangler.jsonc from the example
+        run: cp -n wrangler.jsonc.example wrangler.jsonc
+
+      - run: npm run typecheck
+
+      - run: npm run check:wrapper
+
+      - run: npm run build
