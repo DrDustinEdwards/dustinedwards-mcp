@@ -1,8 +1,32 @@
 # dustinedwards-mcp
 
 An MCP wrapper over the [dustinedwards.info](https://dustinedwards.info) operator
-publish API. It exposes seven tools to an AI agent and **contains no policy of
+publish API. It exposes eleven tools to an AI agent and **contains no policy of
 its own**.
+
+## Tools
+
+Each is one `POST /api/operator` call with the same name; the API owns every rule.
+
+| Tool | What it does |
+|---|---|
+| `list_posts` | every post, drafts included, with the head sha |
+| `get_post` | one post's complete markdown file, plus `operatorMayPublish` |
+| `save_post` | commit a complete post file; first publication is admin-only (403 `first-publish-requires-admin`) |
+| `delete_post` | remove a post (destructive) |
+| `sync_status` | the repo, D1 and search index states, separately |
+| `list_mentions` | the webmention moderation queue |
+| `decide_mention` | approve, reject or delete a webmention (delete is admin-only) |
+| `upload_media` | put one image in the media bucket, content-addressed |
+| `list_procedures` | every lab procedure, drafts included, with profile and gap count |
+| `get_procedure` | one procedure's complete file as `raw`, its structured `record`, and its gaps |
+| `save_procedure` | commit a complete procedure file; validated server side (422 with the validator's `errors`), first publication admin-only |
+
+The procedure file format is documented in the site repository's
+`docs/PROCEDURES.md`. The intended edit is small: read with `get_procedure`,
+change the one value asked for, send the whole file back with `save_procedure`
+and the `headSha` as `expectedHeadSha`, and report the validator's message if
+the save is refused.
 
 House standard: Capsid `capsid/mcp-wrapper-standard.md`, ratified 2026-07-30.
 This repo is the reference implementation that standard describes; the foxing

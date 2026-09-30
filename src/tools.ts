@@ -1,5 +1,5 @@
 /**
- * The eight tools.
+ * The eleven tools.
  *
  * FEW tools, exact names, one job each, mirroring the operator API exactly. No
  * convenience composites: composition is the agent's job, and a composite here
@@ -37,15 +37,44 @@ const slugSchema = z
   )
   .describe("The post's slug, which is also its filename under content/posts/.");
 
-const headShaSchema = z
+/** Built per read tool, so the description names the call that supplies it. */
+function headShaFrom(readTool: string, thing: string) {
+  return z
+    .string()
+    .regex(/^[0-9a-f]{7,40}$/, "A git sha is 7 to 40 lowercase hex characters.")
+    .optional()
+    .describe(
+      `Optional. The head sha from ${readTool}, for the editor's conflict semantics. ` +
+        "Omit for an unconditional save. Supplying it means the save is refused with " +
+        `409 if main moved since you read the ${thing}.`,
+    );
+}
+
+const headShaSchema = headShaFrom("get_post", "post");
+
+/**
+ * A procedure slug. Same shape as a post slug and the same reasoning: input
+ * validation that fails an impossible call before the round trip, never a
+ * decision about what is allowed.
+ */
+const procedureSlugSchema = z
   .string()
-  .regex(/^[0-9a-f]{7,40}$/, "A git sha is 7 to 40 lowercase hex characters.")
-  .optional()
-  .describe(
-    "Optional. The head sha from get_post, for the editor's conflict semantics. " +
-      "Omit for an unconditional save. Supplying it means the save is refused with " +
-      "409 if main moved since you read the post.",
-  );
+  .min(1)
+  .max(120)
+  .regex(
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+    "A slug is lowercase letters, digits and single hyphens, e.g. phage-dna-extraction",
+  )
+  .describe("The procedure's slug, which is also its filename under content/procedures/.");
+
+const PROCEDURE_FORMAT =
+  "THE FILE FORMAT is documented in the site repository's docs/PROCEDURES.md. " +
+  "In brief: YAML front matter, then sections and steps written with " +
+  "Cooklang-style marks: @material{amount%unit} for a material, #equipment{} " +
+  "for equipment, ~{10%minutes} for a timer. Flags are lines under a step " +
+  "beginning '> CRITICAL:', '> PAUSE POINT:', '> WHY:', '> TROUBLESHOOTING:', " +
+  "'> EXPECT:' or '> SPIN:'. A value that is not known is written " +
+  "'MISSING: <why>' rather than guessed, and is counted as a gap.";
 
 const DELETE_MENTION_POLICY =
   "POLICY, enforced by the API and not by this wrapper: an operator may approve " +
@@ -108,6 +137,12 @@ async function run(
     if (detail?.policy) parts.push(`policy: ${detail.policy}`);
     if (detail?.field) parts.push(`field: ${detail.field}`);
     if (typeof detail?.line === "number") parts.push(`line: ${detail.line}`);
+    // A validator refusal (422) carries its messages as a list. Each one is
+    // relayed as written, one per line, in the order the API sent them.
+    const errors = (result.detail as { errors?: unknown } | undefined)?.errors;
+    if (Array.isArray(errors)) {
+      for (const message of errors) if (typeof message === "string") parts.push(message);
+    }
 
     return {
       isError: true,
@@ -427,6 +462,102 @@ export const TOOLS: ToolDefinition[] = [
         ...(args.url ? { url: args.url } : {}),
         ...(args.type ? { type: args.type } : {}),
         ...(args.name ? { name: args.name } : {}),
+      }),
+  },
+
+  {
+    name: "list_procedures",
+    config: {
+      title: "List procedures",
+      description:
+        "Lists every lab procedure on dustinedwards.info from the repository, " +
+        "drafts included, with the current head sha of main. Returns slug, path, " +
+        "profile (protocol, recipe or computational), title, draft, version, " +
+        "updated and gaps for each, where gaps is the count of values recorded " +
+        "as MISSING in the file. Use it to find the slug for get_procedure.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    handler: (env) => run(env, "list_procedures", {}),
+  },
+
+  {
+    name: "get_procedure",
+    config: {
+      title: "Get a procedure",
+      description:
+        "Reads one procedure's COMPLETE file, front matter included, exactly as " +
+        "committed, as `raw`, so it can be edited and handed straight back to " +
+        "save_procedure. Also returns the head sha, the draft flag, `record` (the " +
+        "procedure as structured data: front matter fields, and sections with " +
+        "their steps, each step's words, materials, equipment, timers, " +
+        "temperatures, spins and flags) and `gaps`, the MISSING values with the " +
+        "field and the recorded reason for each.\n\n" +
+        "Read `record` to find the step being asked about; edit `raw`, because " +
+        "`raw` is what gets saved.\n\n" +
+        PROCEDURE_FORMAT,
+      inputSchema: z.object({ slug: procedureSlugSchema }),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    handler: (env, args) => run(env, "get_procedure", { slug: args.slug }),
+  },
+
+  {
+    name: "save_procedure",
+    config: {
+      title: "Create or update a procedure",
+      description:
+        "Creates or updates a procedure by committing the complete file to " +
+        "content/procedures/<slug>.md on main and syncing the database, so the " +
+        "page changes without a deploy. Returns slug, path, commitSha, created, " +
+        "draft, gaps and purged.\n\n" +
+        "THE INTENDED USE is a small, exact edit. Read the procedure with " +
+        "get_procedure, change the one value you were asked to change (for " +
+        "example 'change the proteinase K step to 60 °C for 45 minutes'), leave " +
+        "every other line as it was, and send the WHOLE file back as `raw` with " +
+        "the headSha from get_procedure as expectedHeadSha. Not a patch, and not " +
+        "the changed step alone.\n\n" +
+        "The API validates the file against its profile with the same validator " +
+        "CI runs, before anything is written. A file that fails is refused with " +
+        "HTTP 422 and the validator's own messages, which are passed back to you " +
+        "unchanged: report them to the human, fix what they name, and try again. " +
+        "A 409 means main moved since your read: read again and redo the edit.\n\n" +
+        PROCEDURE_FORMAT +
+        "\n\n" +
+        "POLICY, enforced by the API and not by this wrapper: an operator may " +
+        "create and edit a procedure, but may NOT perform its FIRST publication " +
+        "(draft true to false). That is reserved to the human admin and is " +
+        "refused with HTTP 403 and policy name 'first-publish-requires-admin', " +
+        "the same rule as posts. That refusal is the system working correctly, " +
+        "not an error to retry: leave draft true and tell the human the " +
+        "procedure is staged for them to publish.",
+      inputSchema: z.object({
+        slug: procedureSlugSchema,
+        raw: z
+          .string()
+          .min(1)
+          .describe("The complete procedure file including its YAML front matter block."),
+        expectedHeadSha: headShaFrom("get_procedure", "procedure"),
+        isNew: z
+          .boolean()
+          .optional()
+          .describe("Optional. Inferred from whether the file already exists; supply only to be explicit."),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        // Not destructive, for the reason save_post is not: a save is a new
+        // commit on top of history, and the previous file stays in git.
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    handler: (env, args) =>
+      run(env, "save_procedure", {
+        slug: args.slug,
+        raw: args.raw,
+        ...(args.expectedHeadSha ? { expectedHeadSha: args.expectedHeadSha } : {}),
+        ...(args.isNew !== undefined ? { isNew: args.isNew } : {}),
       }),
   },
 ];
