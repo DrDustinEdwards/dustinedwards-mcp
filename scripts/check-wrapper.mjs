@@ -314,6 +314,10 @@ const toolsText = readFileSync(join(SRC, "tools.ts"), "utf8");
  * is an adapter over the one door `/admin/media/upload` already used, so this
  * list growing does not mean a second write path into the bucket exists.
  *
+ * GREW TO ELEVEN with the procedure tools, `list_procedures`, `get_procedure`
+ * and `save_procedure`, mirroring the post trio. The API validates a procedure
+ * against its profile with the validator CI runs; the wrapper only forwards.
+ *
  * NOT EVERY API TOOL IS HERE, which is why this list is shorter than the API's
  * and is not the mirror going stale. The four sync and backup repairs are
  * called by `ship` and by the watchdog; exposing an unattended index rebuild to
@@ -328,6 +332,9 @@ const EXPECTED_TOOLS = [
   "list_mentions",
   "decide_mention",
   "upload_media",
+  "list_procedures",
+  "get_procedure",
+  "save_procedure",
 ];
 const declared = [...toolsText.matchAll(/^\s{4}name:\s*"([a-z_]+)",$/gm)].map((m) => m[1]);
 
@@ -383,6 +390,30 @@ check(
   "save_post's description states the first-publish policy",
   /first-publish-requires-admin/.test(toolsText),
   "An agent that has not been told the rule reads a 403 as a malfunction and retries.",
+);
+
+// The same rule governs a procedure's first publication, and it must be stated
+// in save_procedure's OWN description: an agent reads one tool at a time, so a
+// statement on save_post does not reach an agent editing a procedure.
+const toolBlock = (name) => {
+  const start = toolsText.indexOf(`name: "${name}",`);
+  if (start === -1) return "";
+  const next = toolsText.indexOf('\n    name: "', start + 1);
+  return toolsText.slice(start, next === -1 ? undefined : next);
+};
+check(
+  "save_procedure's description states the first-publish policy",
+  /first-publish-requires-admin/.test(toolBlock("save_procedure")),
+  "An agent that has not been told the rule reads a 403 as a malfunction and retries.",
+);
+
+// A validator refusal carries its messages as detail.errors. They must reach
+// the agent as text, or a 422 arrives as a bare status and the agent cannot
+// fix the file. Relaying is required; rewording them is not this Worker's job.
+check(
+  "run() relays the API's detail.errors messages into the tool text",
+  /\.errors;/.test(codeOnly(toolsText)) && /parts\.push\(message\)/.test(codeOnly(toolsText)),
+  "Without it, save_procedure's 422 reaches the agent with no validator message.",
 );
 
 const POLICY_BRANCHES = [
